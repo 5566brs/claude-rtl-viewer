@@ -1,0 +1,424 @@
+<!doctype html>
+<html lang="he">
+<head>
+<meta charset="utf-8" />
+<title>Claude RTL Viewer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f6f4;
+    --panel: #ffffff;
+    --panel-2: #fbfaf6;
+    --user-bg: #e8f0fb;
+    --border: #e8e8e3;
+    --border-strong: #d8d6cf;
+    --text: #1f1f1c;
+    --muted: #8a8a85;
+    --code-bg: #f1efe9;
+    --accent: #2a662a;
+    --hover: #efece4;
+    --active: #ddebda;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Heebo", "Arial Hebrew", -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.65;
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 20px;
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 18px 20px 80px;
+    align-items: start;
+  }
+  @media (max-width: 880px) {
+    .layout { grid-template-columns: 1fr; padding: 12px; }
+    .sidebar { position: static !important; max-height: 220px !important; }
+  }
+
+  /* Main */
+  .main { min-width: 0; }
+  .main-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 14px;
+    direction: ltr;
+  }
+  .main-header h1 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    margin: 0;
+    letter-spacing: 0.3px;
+  }
+  #file {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    direction: ltr;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 60%;
+  }
+
+  #status {
+    position: fixed;
+    top: 10px;
+    inset-inline-start: 12px;
+    font-size: 10px;
+    padding: 3px 9px;
+    border-radius: 10px;
+    background: #e0ddd6;
+    color: #6b6b66;
+    font-family: ui-monospace, monospace;
+    z-index: 10;
+  }
+  #status.live { background: #d4ecd4; color: var(--accent); }
+  #status.dead { background: #f1d4d4; color: #a33; }
+
+  .msg {
+    margin: 0 0 14px;
+    padding: 14px 18px;
+    border-radius: 12px;
+    word-wrap: break-word;
+    overflow-wrap: anywhere;
+  }
+  .msg.user { background: var(--user-bg); }
+  .msg.assistant { background: var(--panel); border: 1px solid var(--border); }
+  .role {
+    font-size: 10px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+    letter-spacing: 0.6px;
+    font-family: ui-monospace, monospace;
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  .body { unicode-bidi: plaintext; }
+  .body > *:first-child { margin-top: 0; }
+  .body > *:last-child { margin-bottom: 0; }
+  .body p, .body li, .body h1, .body h2, .body h3, .body h4, .body blockquote {
+    unicode-bidi: plaintext;
+  }
+  .body p { margin: 0.55em 0; }
+  .body h1, .body h2, .body h3, .body h4 { margin: 0.8em 0 0.4em; line-height: 1.3; }
+  .body h1 { font-size: 1.35em; }
+  .body h2 { font-size: 1.18em; }
+  .body h3 { font-size: 1.05em; }
+  .body ul, .body ol { padding-inline-start: 26px; margin: 0.4em 0; }
+  .body li { margin: 0.2em 0; }
+  .body blockquote {
+    border-inline-start: 3px solid #d0cec7;
+    margin: 0.5em 0;
+    padding: 0.1em 12px;
+    color: #555;
+  }
+  .body pre {
+    background: var(--code-bg);
+    padding: 10px 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: embed;
+    font-size: 0.88em;
+    line-height: 1.5;
+  }
+  .body code {
+    background: var(--code-bg);
+    padding: 1px 6px;
+    border-radius: 3px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 0.9em;
+    direction: ltr;
+    unicode-bidi: embed;
+  }
+  .body pre code { background: none; padding: 0; font-size: 1em; }
+  .body a { color: #1a5fb4; }
+  .body table { border-collapse: collapse; margin: 0.5em 0; }
+  .body th, .body td { border: 1px solid var(--border); padding: 4px 8px; }
+
+  #empty {
+    text-align: center;
+    color: var(--muted);
+    padding: 60px 20px;
+    font-size: 13px;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: sticky;
+    top: 14px;
+    max-height: calc(100vh - 28px);
+    display: flex;
+    flex-direction: column;
+  }
+  .sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    direction: rtl;
+  }
+  .sidebar-title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.4px;
+  }
+  .latest-btn {
+    border: 1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .latest-btn.active {
+    background: var(--active);
+    border-color: #b6d4af;
+    color: var(--accent);
+  }
+  .latest-btn:hover { background: var(--hover); }
+
+  #sessions {
+    overflow-y: auto;
+    flex: 1;
+    direction: rtl;
+  }
+  .session {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+    direction: rtl;
+  }
+  .session:hover { background: var(--hover); }
+  .session.active { background: var(--active); }
+  .session.live::after {
+    content: "●";
+    color: var(--accent);
+    font-size: 9px;
+    margin-inline-start: 6px;
+    vertical-align: middle;
+  }
+  .session-preview {
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--text);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    unicode-bidi: plaintext;
+  }
+  .session-meta {
+    margin-top: 4px;
+    font-size: 10px;
+    color: var(--muted);
+    font-family: ui-monospace, monospace;
+    direction: ltr;
+    text-align: start;
+    unicode-bidi: plaintext;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .session-project {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .session-time { flex-shrink: 0; }
+</style>
+</head>
+<body dir="auto">
+<div id="status">connecting…</div>
+<div class="layout">
+  <main class="main">
+    <div class="main-header">
+      <h1>Claude RTL viewer</h1>
+      <span id="file"></span>
+    </div>
+    <div id="messages"></div>
+    <div id="empty">ממתין לשיחה…</div>
+  </main>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">שיחות</span>
+      <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
+    </div>
+    <div id="sessions"></div>
+  </aside>
+</div>
+<script>
+  marked.setOptions({ breaks: true, gfm: true });
+
+  const messagesEl = document.getElementById("messages");
+  const sessionsEl = document.getElementById("sessions");
+  const statusEl = document.getElementById("status");
+  const fileEl = document.getElementById("file");
+  const emptyEl = document.getElementById("empty");
+  const latestBtn = document.getElementById("latest-btn");
+
+  const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th";
+
+  let es = null;
+  let mode = "latest";          // "latest" | "pinned"
+  let pinnedFile = null;        // path when pinned
+  let activeFile = null;        // file currently being rendered (from server reset)
+  let sessionsList = [];
+
+  const rtf = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
+  function relTime(ms) {
+    const diff = (ms - Date.now()) / 1000;
+    const abs = Math.abs(diff);
+    if (abs < 60) return rtf.format(Math.round(diff), "second");
+    if (abs < 3600) return rtf.format(Math.round(diff / 60), "minute");
+    if (abs < 86400) return rtf.format(Math.round(diff / 3600), "hour");
+    if (abs < 86400 * 30) return rtf.format(Math.round(diff / 86400), "day");
+    if (abs < 86400 * 365) return rtf.format(Math.round(diff / (86400 * 30)), "month");
+    return rtf.format(Math.round(diff / (86400 * 365)), "year");
+  }
+
+  function projectLabel(proj) {
+    return proj.replace(/^C--Users-eli-?/, "~/").replace(/-+/g, "/").replace(/\/$/, "") || "~";
+  }
+
+  function renderMessage(m) {
+    const div = document.createElement("div");
+    div.className = "msg " + m.role;
+    div.dir = "auto";
+
+    const role = document.createElement("div");
+    role.className = "role";
+    role.textContent = m.role;
+
+    const body = document.createElement("div");
+    body.className = "body";
+    body.dir = "auto";
+    body.innerHTML = marked.parse(m.text);
+    body.querySelectorAll(RTL_TAGS).forEach(el => { el.dir = "auto"; });
+
+    div.append(role, body);
+    return div;
+  }
+
+  function nearBottom() {
+    return window.innerHeight + window.scrollY >= document.body.offsetHeight - 120;
+  }
+
+  function reset(payload) {
+    activeFile = payload.file || null;
+    fileEl.textContent = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
+    messagesEl.innerHTML = "";
+    for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
+    emptyEl.style.display = payload.messages.length ? "none" : "block";
+    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+    paintSidebar();
+  }
+
+  function append(m) {
+    const stick = nearBottom();
+    messagesEl.appendChild(renderMessage(m));
+    emptyEl.style.display = "none";
+    if (stick) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+  }
+
+  function paintSidebar() {
+    sessionsEl.innerHTML = "";
+    for (const s of sessionsList) {
+      const item = document.createElement("div");
+      item.className = "session";
+      item.dataset.path = s.path;
+      if (s.path === activeFile) item.classList.add("active");
+      if (mode === "latest" && s === sessionsList[0]) item.classList.add("live");
+
+      const preview = document.createElement("div");
+      preview.className = "session-preview";
+      preview.dir = "auto";
+      preview.textContent = s.preview || "(שיחה ריקה)";
+
+      const meta = document.createElement("div");
+      meta.className = "session-meta";
+      const proj = document.createElement("span");
+      proj.className = "session-project";
+      proj.textContent = projectLabel(s.project);
+      const time = document.createElement("span");
+      time.className = "session-time";
+      time.textContent = relTime(s.mtime);
+      meta.append(proj, time);
+
+      item.append(preview, meta);
+      item.addEventListener("click", () => pinTo(s.path));
+      sessionsEl.appendChild(item);
+    }
+    latestBtn.classList.toggle("active", mode === "latest");
+  }
+
+  function setStatus(s, cls) {
+    statusEl.textContent = s;
+    statusEl.classList.remove("live", "dead");
+    if (cls) statusEl.classList.add(cls);
+  }
+
+  function connect() {
+    if (es) es.close();
+    const qs = mode === "pinned" && pinnedFile ? `?file=${encodeURIComponent(pinnedFile)}` : "";
+    es = new EventSource("/events" + qs);
+    es.addEventListener("ready", () => setStatus("live", "live"));
+    es.addEventListener("sessions", e => {
+      sessionsList = JSON.parse(e.data);
+      paintSidebar();
+    });
+    es.addEventListener("reset", e => reset(JSON.parse(e.data)));
+    es.addEventListener("append", e => append(JSON.parse(e.data)));
+    es.onerror = () => setStatus("reconnecting…", "dead");
+  }
+
+  function pinTo(path) {
+    mode = "pinned";
+    pinnedFile = path;
+    connect();
+    paintSidebar();
+  }
+  function followLatest() {
+    mode = "latest";
+    pinnedFile = null;
+    connect();
+    paintSidebar();
+  }
+
+  latestBtn.addEventListener("click", followLatest);
+  connect();
+
+  // Refresh relative times every 30s without a full repaint
+  setInterval(() => {
+    document.querySelectorAll(".session-time").forEach((el, i) => {
+      const s = sessionsList[i];
+      if (s) el.textContent = relTime(s.mtime);
+    });
+  }, 30000);
+</script>
+</body>
+</html>
