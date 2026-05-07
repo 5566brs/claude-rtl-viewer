@@ -274,6 +274,28 @@
 <script>
   marked.setOptions({ breaks: true, gfm: true });
 
+  function escapeHtml(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  marked.use({
+    walkTokens(token) {
+      if (token.type === "html") {
+        token.text = escapeHtml(token.raw ?? token.text ?? "");
+      }
+    }
+  });
+
+  function renderMarkdown(text) {
+    try { return marked.parse(text); }
+    catch { return "<pre>" + escapeHtml(text) + "</pre>"; }
+  }
+
   const messagesEl = document.getElementById("messages");
   const sessionsEl = document.getElementById("sessions");
   const statusEl = document.getElementById("status");
@@ -317,7 +339,7 @@
     const body = document.createElement("div");
     body.className = "body";
     body.dir = "auto";
-    body.innerHTML = marked.parse(m.text);
+    body.innerHTML = renderMarkdown(m.text);
     body.querySelectorAll(RTL_TAGS).forEach(el => { el.dir = "auto"; });
 
     div.append(role, body);
