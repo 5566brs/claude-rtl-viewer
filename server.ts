@@ -77,6 +77,67 @@ async function loadFile(path: string): Promise<Msg[]> {
   return out;
 }
 
+const messageCache = new Map<string, { mtime: number; messages: Msg[] }>();
+
+async function getMessages(path: string, mtime: number): Promise<Msg[]> {
+  const cached = messageCache.get(path);
+  if (cached && cached.mtime === mtime) return cached.messages;
+  const messages = await loadFile(path);
+  messageCache.set(path, { mtime, messages });
+  return messages;
+}
+
+interface SearchHit {
+  path: string;
+  project: string;
+  uuid: string;
+  role: Role;
+  timestamp: string;
+  snippet: string;
+  score: number;
+}
+
+async function search(q: string, limit: number): Promise<SearchHit[]> {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  if (terms.length === 0) return [];
+  const hits: SearchHit[] = [];
+  for (const s of snapshot) {
+    let messages: Msg[];
+    try { messages = await getMessages(s.path, s.mtime); }
+    catch { continue; }
+    for (const m of messages) {
+      const lower = m.text.toLowerCase();
+      let totalCount = 0;
+      let firstIdx = -1;
+      let ok = true;
+      for (const term of terms) {
+        let idx = lower.indexOf(term);
+        if (idx === -1) { ok = false; break; }
+        if (firstIdx === -1 || idx < firstIdx) firstIdx = idx;
+        while (idx !== -1) { totalCount++; idx = lower.indexOf(term, idx + term.length); }
+      }
+      if (!ok) continue;
+      const start = Math.max(0, firstIdx - 80);
+      const end = Math.min(m.text.length, firstIdx + 220);
+      const snippet =
+        (start > 0 ? "…" : "") +
+        m.text.slice(start, end).replace(/\s+/g, " ") +
+        (end < m.text.length ? "…" : "");
+      hits.push({
+        path: s.path,
+        project: s.project,
+        uuid: m.uuid,
+        role: m.role,
+        timestamp: m.timestamp,
+        snippet,
+        score: totalCount,
+      });
+    }
+  }
+  hits.sort((a, b) => b.score - a.score || (b.timestamp || "").localeCompare(a.timestamp || ""));
+  return hits.slice(0, limit);
+}
+
 async function readPreview(path: string): Promise<string> {
   try {
     const buf = await Bun.file(path).slice(0, 32 * 1024).arrayBuffer();
@@ -203,6 +264,12 @@ Bun.serve({
 
     if (url.pathname === "/api/sessions") {
       return Response.json(snapshot);
+    }
+
+    if (url.pathname === "/api/search") {
+      const q = url.searchParams.get("q") ?? "";
+      const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 60)));
+      return search(q, limit).then(hits => Response.json(hits));
     }
 
     if (url.pathname === "/events") {

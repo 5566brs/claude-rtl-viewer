@@ -41,7 +41,7 @@
   }
   @media (max-width: 880px) {
     .layout { grid-template-columns: 1fr; padding: 12px; }
-    .sidebar { position: static !important; max-height: 220px !important; }
+    .sidebar { position: static !important; max-height: 280px !important; }
   }
 
   /* Main */
@@ -250,6 +250,84 @@
     flex: 1;
   }
   .session-time { flex-shrink: 0; }
+
+  .sidebar-search {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    direction: rtl;
+  }
+  .sidebar-search input {
+    width: 100%;
+    border: 1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: inherit;
+    outline: none;
+  }
+  .sidebar-search input:focus { border-color: #b6d4af; }
+
+  #search-results {
+    overflow-y: auto;
+    flex: 1;
+    direction: rtl;
+  }
+  .search-status {
+    padding: 18px 14px;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .search-hit {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .search-hit:hover { background: var(--hover); }
+  .hit-meta {
+    font-size: 10px;
+    color: var(--muted);
+    font-family: ui-monospace, monospace;
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+    direction: ltr;
+    unicode-bidi: plaintext;
+  }
+  .hit-role { flex-shrink: 0; }
+  .hit-project {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .hit-snippet {
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text);
+    unicode-bidi: plaintext;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    word-break: break-word;
+  }
+  .hit-snippet mark {
+    background: #ffe89e;
+    color: inherit;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
+
+  .msg.flash { animation: flashHit 1.6s ease-out; }
+  @keyframes flashHit {
+    0%   { box-shadow: 0 0 0 3px #ffe89e; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
 </style>
 </head>
 <body dir="auto">
@@ -268,7 +346,11 @@
       <span class="sidebar-title">שיחות</span>
       <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
     </div>
+    <div class="sidebar-search">
+      <input id="search-input" type="search" placeholder="חיפוש בכל השיחות…" />
+    </div>
     <div id="sessions"></div>
+    <div id="search-results" hidden></div>
   </aside>
 </div>
 <script>
@@ -310,6 +392,7 @@
   let pinnedFile = null;        // path when pinned
   let activeFile = null;        // file currently being rendered (from server reset)
   let sessionsList = [];
+  let pendingScrollUuid = null; // uuid to scroll to after next reset
 
   const rtf = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
   function relTime(ms) {
@@ -331,6 +414,7 @@
     const div = document.createElement("div");
     div.className = "msg " + m.role;
     div.dir = "auto";
+    div.dataset.uuid = m.uuid;
 
     const role = document.createElement("div");
     role.className = "role";
@@ -356,7 +440,22 @@
     messagesEl.innerHTML = "";
     for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
     emptyEl.style.display = payload.messages.length ? "none" : "block";
-    requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+
+    if (pendingScrollUuid) {
+      const target = messagesEl.querySelector(`[data-uuid="${CSS.escape(pendingScrollUuid)}"]`);
+      pendingScrollUuid = null;
+      if (target) {
+        requestAnimationFrame(() => {
+          target.scrollIntoView({ block: "center" });
+          target.classList.add("flash");
+          setTimeout(() => target.classList.remove("flash"), 1700);
+        });
+      } else {
+        requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      }
+    } else {
+      requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+    }
     paintSidebar();
   }
 
@@ -432,6 +531,113 @@
   }
 
   latestBtn.addEventListener("click", followLatest);
+
+  // ---------- search ----------
+  const searchInput = document.getElementById("search-input");
+  const searchResultsEl = document.getElementById("search-results");
+  let searchTimer = null;
+  let searchReqId = 0;
+  let lastQuery = "";
+
+  function highlightMatches(text, q) {
+    let out = escapeHtml(text);
+    const terms = q.split(/\s+/).filter(Boolean);
+    for (const term of terms) {
+      const escTerm = escapeHtml(term).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (!escTerm) continue;
+      out = out.replace(new RegExp(escTerm, "gi"), m => `<mark>${m}</mark>`);
+    }
+    return out;
+  }
+
+  function renderSearchResults(hits, q) {
+    searchResultsEl.innerHTML = "";
+    if (hits.length === 0) {
+      searchResultsEl.innerHTML = `<div class="search-status">אין תוצאות</div>`;
+      return;
+    }
+    for (const hit of hits) {
+      const item = document.createElement("div");
+      item.className = "search-hit";
+
+      const meta = document.createElement("div");
+      meta.className = "hit-meta";
+      const role = document.createElement("span");
+      role.className = "hit-role";
+      role.textContent = hit.role;
+      const proj = document.createElement("span");
+      proj.className = "hit-project";
+      proj.textContent = projectLabel(hit.project);
+      const time = document.createElement("span");
+      time.className = "hit-time";
+      time.textContent = hit.timestamp ? relTime(new Date(hit.timestamp).getTime()) : "";
+      meta.append(role, proj, time);
+
+      const snip = document.createElement("div");
+      snip.className = "hit-snippet";
+      snip.dir = "auto";
+      snip.innerHTML = highlightMatches(hit.snippet, q);
+
+      item.append(meta, snip);
+      item.addEventListener("click", () => {
+        pendingScrollUuid = hit.uuid;
+        if (hit.path === activeFile && mode === "pinned") {
+          // already on this session — scroll directly
+          const target = messagesEl.querySelector(`[data-uuid="${CSS.escape(hit.uuid)}"]`);
+          pendingScrollUuid = null;
+          if (target) {
+            target.scrollIntoView({ block: "center" });
+            target.classList.add("flash");
+            setTimeout(() => target.classList.remove("flash"), 1700);
+          }
+        } else {
+          pinTo(hit.path);
+        }
+      });
+      searchResultsEl.appendChild(item);
+    }
+  }
+
+  async function runSearch(q) {
+    const reqId = ++searchReqId;
+    sessionsEl.hidden = true;
+    searchResultsEl.hidden = false;
+    searchResultsEl.innerHTML = `<div class="search-status">מחפש…</div>`;
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
+      const hits = await res.json();
+      if (reqId !== searchReqId) return;
+      renderSearchResults(hits, q);
+    } catch {
+      if (reqId !== searchReqId) return;
+      searchResultsEl.innerHTML = `<div class="search-status">שגיאה</div>`;
+    }
+  }
+
+  function clearSearch() {
+    lastQuery = "";
+    searchReqId++;
+    sessionsEl.hidden = false;
+    searchResultsEl.hidden = true;
+    searchResultsEl.innerHTML = "";
+  }
+
+  searchInput.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    const q = searchInput.value.trim();
+    if (!q) { clearSearch(); return; }
+    if (q === lastQuery) return;
+    searchTimer = setTimeout(() => { lastQuery = q; runSearch(q); }, 220);
+  });
+
+  searchInput.addEventListener("keydown", e => {
+    if (e.key === "Escape") {
+      searchInput.value = "";
+      clearSearch();
+      searchInput.blur();
+    }
+  });
+
   connect();
 
   // Refresh relative times every 30s without a full repaint
