@@ -557,71 +557,217 @@
   }
 
   .source-bar {
-    padding: 8px 12px;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
     direction: rtl;
     display: flex;
-    flex-direction: column;
-    gap: 6px;
-  }
-  .source-tabs {
-    display: flex;
-    gap: 2px;
-    background: var(--panel-2);
-    padding: 2px;
-    border-radius: 8px;
-    border: 1px solid var(--border-strong);
-  }
-  .src-tab {
-    flex: 1;
-    border: 0;
-    background: transparent;
-    color: var(--muted);
-    font-size: 11px;
-    padding: 4px 8px;
-    border-radius: 6px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .src-tab.active {
-    background: var(--panel);
-    color: var(--text);
-    box-shadow: 0 0 0 1px var(--border-strong);
-  }
-  .src-tab:not(.active):hover { color: var(--text); }
-  #local-controls {
-    display: flex;
-    gap: 6px;
     align-items: center;
-    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px;
   }
-  #local-controls button {
-    border: 1px solid var(--border-strong);
-    background: var(--panel-2);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 4px 9px;
+  .source-summary {
     font-size: 11px;
-    font-family: inherit;
-    cursor: pointer;
-  }
-  #local-controls button:hover { background: var(--hover); }
-  .local-status {
-    font-size: 10px;
     color: var(--muted);
-    font-family: ui-monospace, monospace;
-    flex: 1;
-    text-align: start;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    direction: ltr;
+    text-align: start;
+    flex: 1;
   }
-  .local-status.warn { color: #a33; }
+  .src-change-btn {
+    border: 1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 2px 10px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .src-change-btn:hover { color: var(--text); background: var(--hover); }
+
+  /* Setup / welcome screen */
+  .setup {
+    max-width: 640px;
+    margin: 60px auto;
+    padding: 24px 26px 22px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    direction: rtl;
+  }
+  .setup-title {
+    font-size: 18px;
+    font-weight: 600;
+    margin: 0 0 10px;
+    direction: ltr;
+    text-align: start;
+  }
+  .setup-intro {
+    color: var(--muted);
+    margin: 0 0 18px;
+    font-size: 13px;
+    line-height: 1.7;
+  }
+  .setup-error {
+    background: #f1d4d4;
+    color: #a33;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 16px;
+    font-size: 12px;
+    line-height: 1.55;
+  }
+  .setup-options {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  @media (max-width: 560px) {
+    .setup-options { grid-template-columns: 1fr; }
+  }
+  .setup-option {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px 16px;
+    background: var(--panel-2);
+    display: flex;
+    flex-direction: column;
+  }
+  .setup-option p { flex: 1; }
+  .setup-option h2 {
+    font-size: 14px;
+    margin: 0 0 6px;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .setup-option p {
+    margin: 0 0 12px;
+    color: var(--muted);
+    font-size: 12.5px;
+    line-height: 1.65;
+  }
+  .setup-option code {
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 0.9em;
+    direction: ltr;
+    unicode-bidi: embed;
+  }
+  .setup-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .setup-label {
+    font-size: 11px;
+    color: var(--muted);
+    flex-shrink: 0;
+  }
+  .setup-row input {
+    flex: 1;
+    min-width: 200px;
+    border: 1px solid var(--border-strong);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    outline: none;
+  }
+  .setup-row input:focus { border-color: #b6d4af; }
+  .setup-btn {
+    border: 1px solid var(--border-strong);
+    background: var(--panel);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-family: inherit;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .setup-btn:hover { background: var(--hover); }
+  .setup-btn.primary {
+    background: var(--active);
+    color: var(--accent);
+    border-color: #b6d4af;
+  }
+  .setup-btn.primary:hover { background: #cee5c8; }
+  .setup-btn:disabled {
+    opacity: 0.55;
+    cursor: progress;
+  }
+  .setup-hint {
+    font-size: 11px;
+    color: var(--muted);
+    flex: 1;
+  }
+  .setup-hint.warn { color: #a33; }
+  .setup-privacy {
+    margin: 14px 0 0;
+    text-align: center;
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.6;
+  }
 </style>
 </head>
 <body dir="auto">
 <div id="status">connecting…</div>
+<div id="setup" class="setup" hidden>
+  <h1 class="setup-title">Claude RTL Viewer</h1>
+  <p class="setup-intro">
+    כלי לוקאלי לצפייה בתמלילי שיחות של Claude Code (קבצי <code>.jsonl</code>),
+    עם תמיכה ב-RTL ו-LTR מעורבים. בחר באיזה אופן הצופה ייגש לקבצים:
+  </p>
+  <div id="setup-error" class="setup-error" hidden></div>
+
+  <div class="setup-options">
+    <div class="setup-option">
+      <h2>תיקייה ישירות בדפדפן</h2>
+      <p>
+        ללא שרת — הצופה ניגש לקבצים דרך File System Access API. עובד רק בדפדפנים
+        מבוססי Chromium (Chrome / Edge), ויידרש לאשר גישה. בחר את התיקייה
+        <code>projects</code> שבתוך <code>~/.claude</code> (בדרך כלל
+        <code>C:\Users\&lt;user&gt;\.claude\projects</code> ב-Windows או
+        <code>~/.claude/projects</code> ב-macOS/Linux).
+      </p>
+      <div class="setup-row">
+        <button id="setup-folder-btn" type="button" class="setup-btn primary">בחר תיקייה</button>
+        <span id="setup-folder-hint" class="setup-hint"></span>
+      </div>
+    </div>
+
+    <div class="setup-option">
+      <h2>שרת מקומי (SSE)</h2>
+      <p>
+        מצריך הפעלה של ה-Bun server בתיקיית הפרויקט באמצעות <code>bun run start</code>.
+        השרת קורא את הקבצים מהנתיב המקודד ב-<code>server.ts</code>
+        (קבוע <code>PROJECTS_DIR</code> — בדרך כלל
+        <code>~/.claude/projects</code>) ומשדר עדכונים חיים. הצופה עצמו יכול
+        לרוץ מכל מקום — דומיין מרוחק או מקומי — ולהתחבר אליו.
+      </p>
+      <div class="setup-row">
+        <label class="setup-label">כתובת</label>
+        <input id="setup-url" type="text" dir="ltr" spellcheck="false" />
+        <button id="setup-server-btn" type="button" class="setup-btn primary">חבר</button>
+      </div>
+    </div>
+  </div>
+
+  <p class="setup-privacy">
+    הפרויקט סטטי, ופועל כולו בדפדפן או מול שרת לוקאלי שלך — שום מידע מהתמלילים לא נשלח לשרת חיצוני.
+  </p>
+</div>
 <div class="layout">
   <main class="main">
     <div class="main-header">
@@ -637,14 +783,8 @@
       <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
     </div>
     <div class="source-bar">
-      <div class="source-tabs" role="tablist">
-        <button class="src-tab active" data-source="server" type="button" role="tab">שרת מקומי</button>
-        <button class="src-tab" data-source="local" type="button" role="tab">תיקייה בדפדפן</button>
-      </div>
-      <div id="local-controls" hidden>
-        <button id="pick-folder" type="button">בחר תיקייה</button>
-        <span id="local-status" class="local-status"></span>
-      </div>
+      <span id="source-summary" class="source-summary"></span>
+      <button id="change-source-btn" class="src-change-btn" type="button">החלף</button>
     </div>
     <div class="sidebar-search">
       <input id="search-input" type="search" placeholder="חיפוש בכל השיחות…" />
@@ -746,15 +886,21 @@
   }
 
   // ---------- shared DOM + render ----------
+  const layoutEl = document.querySelector(".layout");
   const messagesEl = document.getElementById("messages");
   const sessionsEl = document.getElementById("sessions");
   const statusEl = document.getElementById("status");
   const fileEl = document.getElementById("file");
   const emptyEl = document.getElementById("empty");
   const latestBtn = document.getElementById("latest-btn");
-  const localControlsEl = document.getElementById("local-controls");
-  const localStatusEl = document.getElementById("local-status");
-  const pickFolderBtn = document.getElementById("pick-folder");
+  const setupEl = document.getElementById("setup");
+  const setupErrorEl = document.getElementById("setup-error");
+  const setupUrlInput = document.getElementById("setup-url");
+  const setupServerBtn = document.getElementById("setup-server-btn");
+  const setupFolderBtn = document.getElementById("setup-folder-btn");
+  const setupFolderHintEl = document.getElementById("setup-folder-hint");
+  const sourceSummaryEl = document.getElementById("source-summary");
+  const changeSourceBtn = document.getElementById("change-source-btn");
 
   const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th";
 
@@ -1595,18 +1741,48 @@
 
   // ---------- source switching ----------
   const SOURCE_KEY = "rtl-viewer:source";
+  const SERVER_URL_KEY = "rtl-viewer:server-url";
   const DIR_KEY = "rtl-viewer:dir";
+  const DEFAULT_SERVER_URL = "http://localhost:5577";
 
-  function setSourceTab(name) {
-    document.querySelectorAll(".src-tab").forEach(b => {
-      b.classList.toggle("active", b.dataset.source === name);
-    });
-    localControlsEl.hidden = name !== "local";
+  function getServerUrl() {
+    const raw = (localStorage.getItem(SERVER_URL_KEY) || "").trim();
+    return raw || DEFAULT_SERVER_URL;
+  }
+  function setServerUrl(url) { localStorage.setItem(SERVER_URL_KEY, url); }
+  function normalizeUrl(url) {
+    return String(url ?? "").trim().replace(/\/+$/, "") || DEFAULT_SERVER_URL;
   }
 
-  function setLocalStatus(text, warn = false) {
-    localStatusEl.textContent = text;
-    localStatusEl.classList.toggle("warn", warn);
+  function showSetup({ error = "", folderHint = "", folderWarn = false } = {}) {
+    layoutEl.hidden = true;
+    setupEl.hidden = false;
+    setupUrlInput.value = getServerUrl();
+    if (error) { setupErrorEl.textContent = error; setupErrorEl.hidden = false; }
+    else { setupErrorEl.hidden = true; setupErrorEl.textContent = ""; }
+    setupFolderHintEl.textContent = folderHint;
+    setupFolderHintEl.classList.toggle("warn", folderWarn);
+  }
+
+  function hideSetup() {
+    setupEl.hidden = true;
+    layoutEl.hidden = false;
+  }
+
+  function updateSourceSummary(label) {
+    sourceSummaryEl.textContent = label;
+    sourceSummaryEl.title = label;
+  }
+
+  // Probe a server for `/api/sessions` with a short timeout. Returns true on 2xx.
+  async function probeServer(url, timeoutMs = 3000) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(`${url}/api/sessions`, { signal: ctrl.signal, cache: "no-store" });
+      return res.ok;
+    } catch { return false; }
+    finally { clearTimeout(timer); }
   }
 
   function startSource(newSource) {
@@ -1622,36 +1798,38 @@
     source.start();
   }
 
-  async function useServer() {
-    setSourceTab("server");
-    setLocalStatus("");
+  async function useServer(url) {
+    const cleanUrl = normalizeUrl(url || getServerUrl());
+    setServerUrl(cleanUrl);
     localStorage.setItem(SOURCE_KEY, "server");
-    startSource(new ServerSource(handlers));
+    updateSourceSummary(`server · ${cleanUrl}`);
+    hideSetup();
+    startSource(new ServerSource(handlers, cleanUrl));
   }
 
-  async function useLocal(dirHandle, opts = {}) {
+  async function useLocal(dirHandle) {
     if (!("FileSystemObserver" in window)) {
-      setLocalStatus("FileSystemObserver לא נתמך בדפדפן הזה", true);
+      showSetup({ error: "FileSystemObserver לא נתמך בדפדפן הזה. נסה Chrome או Edge עדכניים, או השתמש בשרת המקומי." });
       return false;
     }
-    setSourceTab("local");
-    setLocalStatus(opts.label || "תיקייה נבחרה");
     localStorage.setItem(SOURCE_KEY, "local");
     try { await idbSet(DIR_KEY, dirHandle); } catch (err) { console.error("idbSet:", err); }
+    updateSourceSummary(`folder · ${dirHandle.name}`);
+    hideSetup();
     startSource(new LocalSource(handlers, dirHandle));
     return true;
   }
 
   async function pickFolder() {
     if (!("showDirectoryPicker" in window)) {
-      setLocalStatus("showDirectoryPicker לא נתמך", true);
+      showSetup({ error: "showDirectoryPicker לא נתמך בדפדפן הזה." });
       return;
     }
     let dirHandle;
     try {
       dirHandle = await window.showDirectoryPicker({ id: "claude-projects", mode: "read" });
     } catch { return; }
-    await useLocal(dirHandle, { label: dirHandle.name });
+    await useLocal(dirHandle);
   }
 
   async function tryRehydrateLocal() {
@@ -1659,29 +1837,34 @@
     if (!stored) return false;
     try {
       const perm = await stored.queryPermission?.({ mode: "read" });
-      if (perm === "granted") return await useLocal(stored, { label: stored.name });
-      // Need a user gesture to re-grant — switch to local tab and prompt
-      setSourceTab("local");
-      setLocalStatus(`לחץ "בחר תיקייה" כדי לחדש הרשאה ל-${stored.name}`, true);
+      if (perm === "granted") return await useLocal(stored);
+      // Need a user gesture to re-grant.
+      showSetup({ folderHint: `לחץ "בחר תיקייה" כדי לחדש הרשאה ל-${stored.name}`, folderWarn: true });
       return false;
     } catch {
       return false;
     }
   }
 
-  pickFolderBtn.addEventListener("click", pickFolder);
-  document.querySelectorAll(".src-tab").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const src = btn.dataset.source;
-      if (src === "server") return useServer();
-      // src === "local"
-      setSourceTab("local");
-      const ok = await tryRehydrateLocal();
-      if (!ok && !source?.constructor?.name?.startsWith?.("Local")) {
-        // no stored handle (or denied) — leave server source running until user picks
-        if (!localStatusEl.textContent) setLocalStatus("בחר תיקייה כדי להתחיל");
-      }
-    });
+  setupServerBtn.addEventListener("click", async () => {
+    const url = normalizeUrl(setupUrlInput.value || DEFAULT_SERVER_URL);
+    setupServerBtn.disabled = true;
+    setupErrorEl.hidden = true;
+    const ok = await probeServer(url);
+    setupServerBtn.disabled = false;
+    if (ok) {
+      setServerUrl(url);
+      await useServer(url);
+    } else {
+      setupErrorEl.textContent = `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, ושכתובת השרת תקינה.`;
+      setupErrorEl.hidden = false;
+    }
+  });
+
+  setupFolderBtn.addEventListener("click", pickFolder);
+
+  changeSourceBtn.addEventListener("click", () => {
+    showSetup();
   });
 
   async function init() {
@@ -1689,8 +1872,19 @@
     if (pref === "local") {
       const ok = await tryRehydrateLocal();
       if (ok) return;
+      // tryRehydrateLocal already showed setup with appropriate hint when needed.
+      if (setupEl.hidden) showSetup();
+      return;
     }
-    await useServer();
+    if (pref === "server") {
+      const url = getServerUrl();
+      const ok = await probeServer(url);
+      if (ok) { await useServer(url); return; }
+      showSetup({ error: `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, או החלף לתיקייה ישירה בדפדפן.` });
+      return;
+    }
+    // No preference — first-time visit.
+    showSetup();
   }
   init();
 
