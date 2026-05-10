@@ -225,7 +225,6 @@
   .tool-kv dd { margin: 0; word-break: break-word; }
   .tool-diff {
     margin: 0;
-    padding: 4px 0;
     background: var(--code-bg);
     border-radius: 4px;
     font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -236,19 +235,42 @@
     unicode-bidi: embed;
     max-height: 480px;
     overflow: auto;
+  }
+  .diff-row { display: flex; }
+  .diff-side {
+    flex: 1 1 50%;
+    min-width: 0;
+    display: flex;
+    padding: 0 6px;
+    min-height: 1.5em;
     white-space: pre;
   }
-  .diff-line { display: flex; padding: 0 6px; }
-  .diff-line.diff-add { background: #d4edcd; color: #1e3a1e; }
-  .diff-line.diff-del { background: #f2cdcd; color: #5a1717; }
-  .diff-line.diff-ctx { color: var(--muted); }
+  .diff-side.diff-left { border-inline-end: 1px solid var(--border); }
+  .diff-side.diff-ctx { color: var(--muted); }
+  .diff-side.diff-del { background: #f2cdcd; color: #5a1717; }
+  .diff-side.diff-add { background: #d4edcd; color: #1e3a1e; }
+  .diff-side.diff-empty {
+    background-image: repeating-linear-gradient(
+      -45deg,
+      transparent 0,
+      transparent 5px,
+      rgba(0, 0, 0, 0.05) 5px,
+      rgba(0, 0, 0, 0.05) 6px
+    );
+  }
   .diff-mark {
     flex-shrink: 0;
     width: 14px;
     user-select: none;
     text-align: center;
   }
-  .diff-text { white-space: pre; }
+  .diff-text { white-space: pre; flex: 1; min-width: 0; }
+  @media (max-width: 700px) {
+    .diff-row { flex-direction: column; }
+    .diff-side { flex-basis: auto; border-inline-end: 0 !important; }
+    .diff-side.diff-empty { display: none; }
+    .diff-row-ctx .diff-right { display: none; }
+  }
   .tool-diff-fallback { display: flex; flex-direction: column; gap: 6px; }
   .tool-entry-input {
     margin: 0;
@@ -782,15 +804,16 @@
     }
     return dl;
   }
-  // Line-based diff via LCS. Falls back to side-by-side raw blocks when too large.
+  // Line-based diff via LCS, rendered side-by-side (old | new). Falls back to
+  // raw blocks when too large. CSS collapses to a single column on narrow screens.
   function renderDiff(oldText, newText) {
     const oldLines = oldText ? String(oldText).split("\n") : [];
     const newLines = newText ? String(newText).split("\n") : [];
     const n = oldLines.length, m = newLines.length;
     if (n + m > 1200) {
       const wrap = el("div", "tool-diff-fallback");
-      if (n) wrap.appendChild(Object.assign(el("pre", "tool-code"), { textContent: "--- old\n" + oldLines.join("\n") }));
-      if (m) wrap.appendChild(Object.assign(el("pre", "tool-code"), { textContent: "+++ new\n" + newLines.join("\n") }));
+      if (n) wrap.appendChild(el("pre", "tool-code", "--- old\n" + oldLines.join("\n")));
+      if (m) wrap.appendChild(el("pre", "tool-code", "+++ new\n" + newLines.join("\n")));
       return wrap;
     }
     const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
@@ -799,21 +822,54 @@
         dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
       }
     }
-    const wrap = el("pre", "tool-diff");
+    const ops = [];
     let i = 0, j = 0;
-    const push = (type, text) => {
-      const line = el("div", `diff-line diff-${type}`);
-      line.appendChild(el("span", "diff-mark", type === "del" ? "-" : type === "add" ? "+" : " "));
-      line.appendChild(el("span", "diff-text", text));
-      wrap.appendChild(line);
-    };
     while (i < n && j < m) {
-      if (oldLines[i] === newLines[j]) { push("ctx", oldLines[i]); i++; j++; }
-      else if (dp[i + 1][j] >= dp[i][j + 1]) { push("del", oldLines[i++]); }
-      else { push("add", newLines[j++]); }
+      if (oldLines[i] === newLines[j]) { ops.push({ t: "ctx", text: oldLines[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) ops.push({ t: "del", text: oldLines[i++] });
+      else ops.push({ t: "add", text: newLines[j++] });
     }
-    while (i < n) push("del", oldLines[i++]);
-    while (j < m) push("add", newLines[j++]);
+    while (i < n) ops.push({ t: "del", text: oldLines[i++] });
+    while (j < m) ops.push({ t: "add", text: newLines[j++] });
+
+    // Pair consecutive del/add runs into side-by-side rows.
+    const rows = [];
+    let dels = [], adds = [];
+    const flushMod = () => {
+      const max = Math.max(dels.length, adds.length);
+      for (let k = 0; k < max; k++) rows.push({ kind: "mod", left: dels[k], right: adds[k] });
+      dels = []; adds = [];
+    };
+    for (const op of ops) {
+      if (op.t === "ctx") { flushMod(); rows.push({ kind: "ctx", text: op.text }); }
+      else if (op.t === "del") dels.push(op.text);
+      else adds.push(op.text);
+    }
+    flushMod();
+
+    const wrap = el("div", "tool-diff");
+    const makeSide = (cls, mark, text) => {
+      const side = el("div", "diff-side " + cls);
+      if (cls.includes("diff-empty")) return side;
+      side.appendChild(el("span", "diff-mark", mark));
+      side.appendChild(el("span", "diff-text", text));
+      return side;
+    };
+    for (const row of rows) {
+      const r = el("div", "diff-row diff-row-" + row.kind);
+      if (row.kind === "ctx") {
+        r.appendChild(makeSide("diff-ctx diff-left", " ", row.text));
+        r.appendChild(makeSide("diff-ctx diff-right", " ", row.text));
+      } else {
+        r.appendChild(row.left !== undefined
+          ? makeSide("diff-del diff-left", "-", row.left)
+          : makeSide("diff-empty diff-left"));
+        r.appendChild(row.right !== undefined
+          ? makeSide("diff-add diff-right", "+", row.right)
+          : makeSide("diff-empty diff-right"));
+      }
+      wrap.appendChild(r);
+    }
     return wrap;
   }
 
@@ -1054,8 +1110,10 @@
       btn.type = "button";
       btn.title = "raw JSON";
       btn.addEventListener("click", () => {
-        rawPre.hidden = !rawPre.hidden;
-        btn.classList.toggle("active", !rawPre.hidden);
+        const showRaw = rawPre.hidden;
+        rawPre.hidden = !showRaw;
+        bodyEl.hidden = showRaw;
+        btn.classList.toggle("active", showRaw);
       });
       header.appendChild(btn);
     }
