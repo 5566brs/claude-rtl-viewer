@@ -133,14 +133,123 @@
     flex-direction: column;
     gap: 8px;
   }
+  .tool-entry-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
   .tool-entry-name {
     font-weight: 600;
     font-size: 11px;
     color: var(--muted);
-    margin-bottom: 4px;
     text-transform: uppercase;
     letter-spacing: 0.4px;
   }
+  .tool-raw-btn {
+    border: 1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--muted);
+    border-radius: 4px;
+    padding: 1px 7px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 10px;
+    cursor: pointer;
+    line-height: 1.4;
+  }
+  .tool-raw-btn:hover { color: var(--text); background: var(--hover); }
+  .tool-raw-btn.active {
+    background: var(--active);
+    color: var(--accent);
+    border-color: #b6d4af;
+  }
+  .tool-raw { margin-top: 6px; }
+  .tool-block { display: flex; flex-direction: column; gap: 4px; }
+  .tool-path {
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 12px;
+    color: var(--text);
+    word-break: break-all;
+    direction: ltr;
+  }
+  .tool-meta {
+    font-size: 11px;
+    color: var(--muted);
+    direction: ltr;
+    word-break: break-word;
+  }
+  .tool-tag {
+    align-self: flex-start;
+    font-size: 10px;
+    color: var(--muted);
+    padding: 1px 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 4px;
+    font-family: ui-monospace, monospace;
+  }
+  .tool-task-desc {
+    font-size: 12px;
+    color: var(--text);
+    unicode-bidi: plaintext;
+  }
+  .tool-code {
+    margin: 0;
+    padding: 6px 8px;
+    background: var(--code-bg);
+    border-radius: 4px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 360px;
+    overflow: auto;
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: embed;
+  }
+  .tool-kv {
+    margin: 0;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 2px 12px;
+    font-size: 12px;
+    direction: ltr;
+  }
+  .tool-kv dt {
+    color: var(--muted);
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+  }
+  .tool-kv dd { margin: 0; word-break: break-word; }
+  .tool-diff {
+    margin: 0;
+    padding: 4px 0;
+    background: var(--code-bg);
+    border-radius: 4px;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: embed;
+    max-height: 480px;
+    overflow: auto;
+    white-space: pre;
+  }
+  .diff-line { display: flex; padding: 0 6px; }
+  .diff-line.diff-add { background: #d4edcd; color: #1e3a1e; }
+  .diff-line.diff-del { background: #f2cdcd; color: #5a1717; }
+  .diff-line.diff-ctx { color: var(--muted); }
+  .diff-mark {
+    flex-shrink: 0;
+    width: 14px;
+    user-select: none;
+    text-align: center;
+  }
+  .diff-text { white-space: pre; }
+  .tool-diff-fallback { display: flex; flex-direction: column; gap: 6px; }
   .tool-entry-input {
     margin: 0;
     padding: 6px 8px;
@@ -156,6 +265,40 @@
     text-align: left;
     unicode-bidi: embed;
   }
+  .todo-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    direction: ltr;
+  }
+  .todo {
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+  }
+  .todo-mark {
+    flex-shrink: 0;
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    color: var(--muted);
+    width: 22px;
+  }
+  .todo-text {
+    font-size: 13px;
+    line-height: 1.5;
+    unicode-bidi: plaintext;
+    flex: 1;
+  }
+  .todo-completed .todo-mark { color: var(--accent); }
+  .todo-completed .todo-text {
+    color: var(--muted);
+    text-decoration: line-through;
+  }
+  .todo-in_progress .todo-mark { color: var(--accent); }
+  .todo-in_progress .todo-text { font-weight: 600; }
   .role {
     font-size: 10px;
     text-transform: uppercase;
@@ -607,6 +750,322 @@
     return proj.replace(/^C--Users-eli-?/, "~/").replace(/-+/g, "/").replace(/\/$/, "") || "~";
   }
 
+  // ---------- per-tool renderers ----------
+  // Each renderer receives the tool_use input and may return:
+  //   { summary?: string, body?: () => HTMLElement }
+  // summary is appended to the tool name on the bar; body fills the expanded panel.
+  // Tools without a renderer fall back to JSON.stringify(input).
+  function basename(path) {
+    const m = String(path ?? "").match(/[^\\\/]+$/);
+    return m ? m[0] : String(path ?? "");
+  }
+  function truncate(s, n) {
+    s = String(s ?? "");
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+  function el(tag, cls, text) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text != null) e.textContent = String(text);
+    return e;
+  }
+  function renderKeyVal(obj) {
+    const dl = el("dl", "tool-kv");
+    for (const [k, v] of Object.entries(obj)) {
+      if (v === undefined || v === null || v === "") continue;
+      dl.appendChild(el("dt", null, k));
+      const dd = document.createElement("dd");
+      if (typeof v === "string") { dd.dir = "auto"; dd.textContent = v; }
+      else if (Array.isArray(v) || typeof v === "object") dd.textContent = JSON.stringify(v);
+      else dd.textContent = String(v);
+      dl.appendChild(dd);
+    }
+    return dl;
+  }
+  // Line-based diff via LCS. Falls back to side-by-side raw blocks when too large.
+  function renderDiff(oldText, newText) {
+    const oldLines = oldText ? String(oldText).split("\n") : [];
+    const newLines = newText ? String(newText).split("\n") : [];
+    const n = oldLines.length, m = newLines.length;
+    if (n + m > 1200) {
+      const wrap = el("div", "tool-diff-fallback");
+      if (n) wrap.appendChild(Object.assign(el("pre", "tool-code"), { textContent: "--- old\n" + oldLines.join("\n") }));
+      if (m) wrap.appendChild(Object.assign(el("pre", "tool-code"), { textContent: "+++ new\n" + newLines.join("\n") }));
+      return wrap;
+    }
+    const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = oldLines[i] === newLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const wrap = el("pre", "tool-diff");
+    let i = 0, j = 0;
+    const push = (type, text) => {
+      const line = el("div", `diff-line diff-${type}`);
+      line.appendChild(el("span", "diff-mark", type === "del" ? "-" : type === "add" ? "+" : " "));
+      line.appendChild(el("span", "diff-text", text));
+      wrap.appendChild(line);
+    };
+    while (i < n && j < m) {
+      if (oldLines[i] === newLines[j]) { push("ctx", oldLines[i]); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { push("del", oldLines[i++]); }
+      else { push("add", newLines[j++]); }
+    }
+    while (i < n) push("del", oldLines[i++]);
+    while (j < m) push("add", newLines[j++]);
+    return wrap;
+  }
+
+  const toolRenderers = {
+    TodoWrite(input) {
+      const todos = Array.isArray(input?.todos) ? input.todos : [];
+      if (!todos.length) return null;
+      return {
+        summary: String(todos.length),
+        body() {
+          const ul = el("ul", "todo-list");
+          for (const t of todos) {
+            const status = t?.status || "pending";
+            const li = el("li", `todo todo-${status}`);
+            li.appendChild(el("span", "todo-mark",
+              status === "completed" ? "[x]" : status === "in_progress" ? "[~]" : "[ ]"));
+            const text = el("span", "todo-text");
+            text.dir = "auto";
+            text.textContent = String((status === "in_progress" && t?.activeForm) ? t.activeForm : (t?.content ?? ""));
+            li.appendChild(text);
+            ul.appendChild(li);
+          }
+          return ul;
+        },
+      };
+    },
+
+    Edit(input) {
+      const path = input?.file_path;
+      if (!path) return null;
+      return {
+        summary: basename(path),
+        body() {
+          const wrap = el("div", "tool-block");
+          wrap.appendChild(el("div", "tool-path", path));
+          wrap.appendChild(renderDiff(input.old_string ?? "", input.new_string ?? ""));
+          if (input.replace_all) wrap.appendChild(el("div", "tool-tag", "replace_all"));
+          return wrap;
+        },
+      };
+    },
+
+    Write(input) {
+      const path = input?.file_path;
+      if (!path) return null;
+      return {
+        summary: basename(path),
+        body() {
+          const wrap = el("div", "tool-block");
+          wrap.appendChild(el("div", "tool-path", path));
+          if (typeof input.content === "string") {
+            wrap.appendChild(el("pre", "tool-code", input.content));
+          }
+          return wrap;
+        },
+      };
+    },
+
+    Read(input) {
+      const path = input?.file_path;
+      if (!path) return null;
+      let summary = basename(path);
+      if (input.offset || input.limit) {
+        const start = Number(input.offset) || 1;
+        const end = input.limit ? start + Number(input.limit) - 1 : null;
+        summary += end ? `:${start}-${end}` : `:${start}+`;
+      }
+      return {
+        summary,
+        body() {
+          const wrap = el("div", "tool-block");
+          wrap.appendChild(el("div", "tool-path", path));
+          if (input.offset || input.limit) {
+            wrap.appendChild(el("div", "tool-meta",
+              `lines ${input.offset || 1}${input.limit ? ` (count ${input.limit})` : ""}`));
+          }
+          if (input.pages) wrap.appendChild(el("div", "tool-meta", `pages ${input.pages}`));
+          return wrap;
+        },
+      };
+    },
+
+    Bash(input) {
+      const cmd = input?.command;
+      if (!cmd) return null;
+      return {
+        summary: truncate(input?.description || cmd, 50),
+        body() {
+          const wrap = el("div", "tool-block");
+          if (input.description) wrap.appendChild(el("div", "tool-meta", input.description));
+          wrap.appendChild(el("pre", "tool-code", cmd));
+          if (input.timeout) wrap.appendChild(el("div", "tool-meta", `timeout: ${input.timeout}ms`));
+          if (input.run_in_background) wrap.appendChild(el("div", "tool-tag", "background"));
+          return wrap;
+        },
+      };
+    },
+
+    Grep(input) {
+      const pattern = input?.pattern;
+      if (!pattern) return null;
+      return {
+        summary: truncate(pattern, 50),
+        body() {
+          return renderKeyVal({
+            pattern: input.pattern,
+            path: input.path,
+            glob: input.glob,
+            type: input.type,
+            output_mode: input.output_mode,
+            "-i": input["-i"],
+            "-n": input["-n"],
+            context: input.context ?? input["-C"],
+            "-A": input["-A"],
+            "-B": input["-B"],
+            multiline: input.multiline,
+            head_limit: input.head_limit,
+          });
+        },
+      };
+    },
+
+    Glob(input) {
+      const pattern = input?.pattern;
+      if (!pattern) return null;
+      return {
+        summary: truncate(pattern, 50),
+        body() { return renderKeyVal({ pattern: input.pattern, path: input.path }); },
+      };
+    },
+
+    Task(input) {
+      const desc = input?.description || input?.subagent_type || "";
+      return {
+        summary: truncate(desc, 50),
+        body() {
+          const wrap = el("div", "tool-block");
+          if (input?.subagent_type) wrap.appendChild(el("div", "tool-meta", `agent: ${input.subagent_type}`));
+          if (input?.description) wrap.appendChild(el("div", "tool-task-desc", input.description));
+          if (input?.prompt) wrap.appendChild(el("pre", "tool-code", input.prompt));
+          if (input?.model) wrap.appendChild(el("div", "tool-meta", `model: ${input.model}`));
+          if (input?.run_in_background) wrap.appendChild(el("div", "tool-tag", "background"));
+          if (input?.isolation) wrap.appendChild(el("div", "tool-tag", `isolation: ${input.isolation}`));
+          return wrap;
+        },
+      };
+    },
+
+    WebFetch(input) {
+      const url = input?.url;
+      if (!url) return null;
+      let host = url;
+      try { host = new URL(url).hostname; } catch {}
+      return {
+        summary: host,
+        body() { return renderKeyVal({ url: input.url, prompt: input.prompt }); },
+      };
+    },
+
+    WebSearch(input) {
+      const q = input?.query;
+      if (!q) return null;
+      return {
+        summary: truncate(q, 50),
+        body() {
+          return renderKeyVal({
+            query: input.query,
+            allowed_domains: input.allowed_domains,
+            blocked_domains: input.blocked_domains,
+          });
+        },
+      };
+    },
+
+    NotebookEdit(input) {
+      const path = input?.notebook_path;
+      if (!path) return null;
+      return {
+        summary: basename(path),
+        body() {
+          const wrap = el("div", "tool-block");
+          wrap.appendChild(el("div", "tool-path", path));
+          const meta = [];
+          if (input.cell_id) meta.push(`cell: ${input.cell_id}`);
+          if (input.cell_type) meta.push(`type: ${input.cell_type}`);
+          if (input.edit_mode) meta.push(`mode: ${input.edit_mode}`);
+          if (meta.length) wrap.appendChild(el("div", "tool-meta", meta.join(" · ")));
+          if (typeof input.new_source === "string") {
+            wrap.appendChild(el("pre", "tool-code", input.new_source));
+          }
+          return wrap;
+        },
+      };
+    },
+
+    Skill(input) {
+      const name = input?.skill;
+      if (!name) return null;
+      return {
+        summary: String(name),
+        body() { return renderKeyVal({ skill: input.skill, args: input.args }); },
+      };
+    },
+  };
+
+  function renderToolBlock(t) {
+    const renderer = toolRenderers[t?.name];
+    let rendered = null;
+    try { rendered = renderer ? renderer(t.input) : null; }
+    catch (err) { console.error(`tool renderer ${t?.name}:`, err); }
+
+    const hasInput = t?.input && typeof t.input === "object" && Object.keys(t.input).length > 0;
+
+    let bodyEl = null;
+    if (rendered && typeof rendered.body === "function") {
+      try { bodyEl = rendered.body(); }
+      catch (err) { console.error(`tool renderer body ${t?.name}:`, err); bodyEl = null; }
+    }
+    const usingCustom = !!bodyEl;
+    if (!bodyEl && hasInput) {
+      bodyEl = el("pre", "tool-entry-input");
+      try { bodyEl.textContent = JSON.stringify(t.input, null, 2); }
+      catch { bodyEl.textContent = String(t.input); }
+    }
+    if (!bodyEl) return { summary: rendered?.summary, entry: null };
+
+    const entry = el("div", "tool-entry");
+    const header = el("div", "tool-entry-header");
+    header.appendChild(el("div", "tool-entry-name", t?.name ?? ""));
+
+    let rawPre = null;
+    if (usingCustom && hasInput) {
+      rawPre = el("pre", "tool-entry-input tool-raw");
+      rawPre.hidden = true;
+      try { rawPre.textContent = JSON.stringify(t.input, null, 2); }
+      catch { rawPre.textContent = String(t.input); }
+      const btn = el("button", "tool-raw-btn", "{ }");
+      btn.type = "button";
+      btn.title = "raw JSON";
+      btn.addEventListener("click", () => {
+        rawPre.hidden = !rawPre.hidden;
+        btn.classList.toggle("active", !rawPre.hidden);
+      });
+      header.appendChild(btn);
+    }
+
+    entry.appendChild(header);
+    entry.appendChild(bodyEl);
+    if (rawPre) entry.appendChild(rawPre);
+    return { summary: rendered?.summary, entry };
+  }
+
   function renderMessage(m) {
     const div = document.createElement("div");
     div.className = "msg " + m.role;
@@ -614,33 +1073,23 @@
     if (m.role === "tool") {
       div.dir = "ltr";
       const tools = Array.isArray(m.tools) ? m.tools : [];
-      const hasInput = tools.some(t => t && t.input && typeof t.input === "object" && Object.keys(t.input).length > 0);
-      if (!hasInput) {
-        div.textContent = m.text;
+      const blocks = tools.map(renderToolBlock);
+      const barText = tools.map((t, i) => {
+        const s = blocks[i].summary;
+        return s ? `${t.name} (${s})` : t.name;
+      }).join(", ") || m.text;
+      const entries = blocks.map(b => b.entry).filter(Boolean);
+      if (!entries.length) {
+        div.textContent = barText;
         return div;
       }
       const details = document.createElement("details");
       const summary = document.createElement("summary");
       summary.className = "tool-summary";
-      summary.textContent = m.text;
+      summary.textContent = barText;
       const body = document.createElement("div");
       body.className = "tool-details";
-      for (const t of tools) {
-        const entry = document.createElement("div");
-        entry.className = "tool-entry";
-        const name = document.createElement("div");
-        name.className = "tool-entry-name";
-        name.textContent = t.name;
-        entry.appendChild(name);
-        if (t.input && typeof t.input === "object" && Object.keys(t.input).length > 0) {
-          const pre = document.createElement("pre");
-          pre.className = "tool-entry-input";
-          try { pre.textContent = JSON.stringify(t.input, null, 2); }
-          catch { pre.textContent = String(t.input); }
-          entry.appendChild(pre);
-        }
-        body.appendChild(entry);
-      }
+      for (const e of entries) body.appendChild(e);
       details.append(summary, body);
       div.appendChild(details);
       return div;
