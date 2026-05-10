@@ -7,7 +7,8 @@ const PORT = Number(process.env.PORT ?? 5577);
 const DEBOUNCE_MS = 30;
 
 type Role = "user" | "assistant" | "tool";
-interface Msg { uuid: string; role: Role; text: string; timestamp: string; tools?: string[]; }
+interface ToolEntry { name: string; input?: unknown; }
+interface Msg { uuid: string; role: Role; text: string; timestamp: string; tools?: ToolEntry[]; }
 interface SessionMeta {
   path: string;
   project: string;
@@ -61,14 +62,14 @@ function parseLine(line: string): Msg[] {
       .map((p: any) => p.text).join("\n").trim();
     if (text) out.push({ uuid: obj.uuid, role: "assistant", text, timestamp: obj.timestamp });
 
-    const tools = obj.message.content
+    const tools: ToolEntry[] = obj.message.content
       .filter((p: any) => p?.type === "tool_use" && typeof p.name === "string")
-      .map((p: any) => p.name as string);
+      .map((p: any) => ({ name: p.name as string, input: p.input }));
     if (tools.length) {
       out.push({
         uuid: text ? `${obj.uuid}#t` : obj.uuid,
         role: "tool",
-        text: tools.join(", "),
+        text: tools.map(t => t.name).join(", "),
         timestamp: obj.timestamp,
         tools,
       });

@@ -106,6 +106,56 @@
     font-size: 11px;
     letter-spacing: 0.2px;
   }
+  .msg.tool details > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .msg.tool details > summary::-webkit-details-marker { display: none; }
+  .msg.tool details > summary::before {
+    content: "▸";
+    display: inline-block;
+    width: 12px;
+    color: var(--muted);
+  }
+  .msg.tool details[open] > summary::before { content: "▾"; }
+  .msg.tool details > summary:hover { color: var(--text); }
+  .tool-details {
+    margin-top: 6px;
+    padding: 8px 10px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 12px;
+    letter-spacing: normal;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .tool-entry-name {
+    font-weight: 600;
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+  }
+  .tool-entry-input {
+    margin: 0;
+    padding: 6px 8px;
+    background: var(--code-bg);
+    border-radius: 4px;
+    font-size: 11px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 360px;
+    overflow: auto;
+    direction: ltr;
+    text-align: left;
+    unicode-bidi: embed;
+  }
   .role {
     font-size: 10px;
     text-transform: uppercase;
@@ -502,12 +552,12 @@
 
       const tools = obj.message.content
         .filter(p => p?.type === "tool_use" && typeof p.name === "string")
-        .map(p => p.name);
+        .map(p => ({ name: p.name, input: p.input }));
       if (tools.length) {
         out.push({
           uuid: text ? `${obj.uuid}#t` : obj.uuid,
           role: "tool",
-          text: tools.join(", "),
+          text: tools.map(t => t.name).join(", "),
           timestamp: obj.timestamp,
           tools,
         });
@@ -563,7 +613,36 @@
     div.dataset.uuid = m.uuid;
     if (m.role === "tool") {
       div.dir = "ltr";
-      div.textContent = m.text;
+      const tools = Array.isArray(m.tools) ? m.tools : [];
+      const hasInput = tools.some(t => t && t.input && typeof t.input === "object" && Object.keys(t.input).length > 0);
+      if (!hasInput) {
+        div.textContent = m.text;
+        return div;
+      }
+      const details = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.className = "tool-summary";
+      summary.textContent = m.text;
+      const body = document.createElement("div");
+      body.className = "tool-details";
+      for (const t of tools) {
+        const entry = document.createElement("div");
+        entry.className = "tool-entry";
+        const name = document.createElement("div");
+        name.className = "tool-entry-name";
+        name.textContent = t.name;
+        entry.appendChild(name);
+        if (t.input && typeof t.input === "object" && Object.keys(t.input).length > 0) {
+          const pre = document.createElement("pre");
+          pre.className = "tool-entry-input";
+          try { pre.textContent = JSON.stringify(t.input, null, 2); }
+          catch { pre.textContent = String(t.input); }
+          entry.appendChild(pre);
+        }
+        body.appendChild(entry);
+      }
+      details.append(summary, body);
+      div.appendChild(details);
       return div;
     }
     div.dir = "auto";
