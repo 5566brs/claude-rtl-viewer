@@ -1,12 +1,13 @@
 import { readdir, stat } from "node:fs/promises";
+import { watch } from "node:fs";
 import { join } from "node:path";
 
 const PROJECTS_DIR = "C:/Users/eli/.claude/projects";
 const PORT = Number(process.env.PORT ?? 5577);
-const POLL_MS = 400;
+const DEBOUNCE_MS = 30;
 
-type Role = "user" | "assistant";
-interface Msg { uuid: string; role: Role; text: string; timestamp: string; }
+type Role = "user" | "assistant" | "tool";
+interface Msg { uuid: string; role: Role; text: string; timestamp: string; tools?: string[]; }
 interface SessionMeta {
   path: string;
   project: string;
@@ -34,10 +35,10 @@ function cleanUserText(text: string): string {
   return text.trim();
 }
 
-function parseLine(line: string): Msg | null {
+function parseLine(line: string): Msg[] {
   let obj: any;
-  try { obj = JSON.parse(line); } catch { return null; }
-  if (obj.isSidechain) return null;
+  try { obj = JSON.parse(line); } catch { return []; }
+  if (obj.isSidechain) return [];
 
   if (obj.type === "user" && obj.message?.content != null) {
     const c = obj.message.content;
@@ -48,20 +49,34 @@ function parseLine(line: string): Msg | null {
         .map((p: any) => p.text).join("\n");
     }
     text = cleanUserText(text);
-    if (!text) return null;
-    if (/^<(ide_|command-|local-command-)/.test(text)) return null;
-    return { uuid: obj.uuid, role: "user", text, timestamp: obj.timestamp };
+    if (!text) return [];
+    if (/^<(ide_|command-|local-command-)/.test(text)) return [];
+    return [{ uuid: obj.uuid, role: "user", text, timestamp: obj.timestamp }];
   }
 
   if (obj.type === "assistant" && Array.isArray(obj.message?.content)) {
+    const out: Msg[] = [];
     const text = obj.message.content
       .filter((p: any) => p?.type === "text" && typeof p.text === "string")
       .map((p: any) => p.text).join("\n").trim();
-    if (!text) return null;
-    return { uuid: obj.uuid, role: "assistant", text, timestamp: obj.timestamp };
+    if (text) out.push({ uuid: obj.uuid, role: "assistant", text, timestamp: obj.timestamp });
+
+    const tools = obj.message.content
+      .filter((p: any) => p?.type === "tool_use" && typeof p.name === "string")
+      .map((p: any) => p.name as string);
+    if (tools.length) {
+      out.push({
+        uuid: text ? `${obj.uuid}#t` : obj.uuid,
+        role: "tool",
+        text: tools.join(", "),
+        timestamp: obj.timestamp,
+        tools,
+      });
+    }
+    return out;
   }
 
-  return null;
+  return [];
 }
 
 async function loadFile(path: string): Promise<Msg[]> {
@@ -71,8 +86,9 @@ async function loadFile(path: string): Promise<Msg[]> {
   const out: Msg[] = [];
   for (const line of text.split("\n")) {
     if (!line) continue;
-    const m = parseLine(line);
-    if (m && !seen.has(m.uuid)) { seen.add(m.uuid); out.push(m); }
+    for (const m of parseLine(line)) {
+      if (!seen.has(m.uuid)) { seen.add(m.uuid); out.push(m); }
+    }
   }
   return out;
 }
@@ -144,8 +160,9 @@ async function readPreview(path: string): Promise<string> {
     const text = dec.decode(buf);
     for (const line of text.split("\n")) {
       if (!line) continue;
-      const m = parseLine(line);
-      if (m && m.role === "user") return m.text.slice(0, 240);
+      for (const m of parseLine(line)) {
+        if (m.role === "user") return m.text.slice(0, 240);
+      }
     }
   } catch {}
   return "";
@@ -153,11 +170,24 @@ async function readPreview(path: string): Promise<string> {
 
 const previewCache = new Map<string, { mtime: number; preview: string }>();
 let snapshot: SessionMeta[] = [];
-let snapshotHash = "";
 
-async function refreshSessions(): Promise<{ list: SessionMeta[]; changed: boolean }> {
+async function readSessionMeta(full: string, proj: string): Promise<SessionMeta | null> {
+  let s;
+  try { s = await stat(full); } catch { return null; }
+  const cached = previewCache.get(full);
+  let preview: string;
+  if (cached && cached.mtime === s.mtimeMs) {
+    preview = cached.preview;
+  } else {
+    preview = await readPreview(full);
+    previewCache.set(full, { mtime: s.mtimeMs, preview });
+  }
+  return { path: full, project: proj, mtime: s.mtimeMs, preview };
+}
+
+async function initialScan(): Promise<void> {
   let projects: string[];
-  try { projects = await readdir(PROJECTS_DIR); } catch { return { list: [], changed: false }; }
+  try { projects = await readdir(PROJECTS_DIR); } catch { snapshot = []; return; }
   const list: SessionMeta[] = [];
   for (const proj of projects) {
     const dir = join(PROJECTS_DIR, proj);
@@ -165,26 +195,12 @@ async function refreshSessions(): Promise<{ list: SessionMeta[]; changed: boolea
     try { entries = await readdir(dir); } catch { continue; }
     for (const f of entries) {
       if (!f.endsWith(".jsonl")) continue;
-      const full = join(dir, f);
-      let s;
-      try { s = await stat(full); } catch { continue; }
-      const cached = previewCache.get(full);
-      let preview: string;
-      if (cached && cached.mtime === s.mtimeMs) {
-        preview = cached.preview;
-      } else {
-        preview = await readPreview(full);
-        previewCache.set(full, { mtime: s.mtimeMs, preview });
-      }
-      list.push({ path: full, project: proj, mtime: s.mtimeMs, preview });
+      const meta = await readSessionMeta(join(dir, f), proj);
+      if (meta) list.push(meta);
     }
   }
   list.sort((a, b) => b.mtime - a.mtime);
-  const hash = list.map(s => `${s.path}:${s.mtime}`).join("|");
-  const changed = hash !== snapshotHash;
-  snapshotHash = hash;
   snapshot = list;
-  return { list, changed };
 }
 
 interface Sub {
@@ -229,28 +245,105 @@ async function processSub(sub: Sub, latest: string | null) {
   const text = dec.decode(slice);
   for (const line of text.split("\n")) {
     if (!line) continue;
-    const m = parseLine(line);
-    if (m && !sub.seen.has(m.uuid)) {
-      sub.seen.add(m.uuid);
-      send(sub.controller, "append", m);
+    for (const m of parseLine(line)) {
+      if (!sub.seen.has(m.uuid)) {
+        sub.seen.add(m.uuid);
+        send(sub.controller, "append", m);
+      }
     }
   }
 }
 
-async function tick() {
-  const { list, changed } = await refreshSessions();
-  const latest = list[0]?.path ?? null;
-  if (changed) for (const sub of subs) send(sub.controller, "sessions", list);
+function broadcastSessions() {
+  for (const sub of subs) send(sub.controller, "sessions", snapshot);
+}
+
+async function syncFile(full: string, proj: string): Promise<boolean> {
+  const meta = await readSessionMeta(full, proj);
+  const idx = snapshot.findIndex(x => x.path === full);
+  if (!meta) {
+    if (idx < 0) return false;
+    snapshot.splice(idx, 1);
+    messageCache.delete(full);
+    previewCache.delete(full);
+    return true;
+  }
+  if (idx >= 0) {
+    const prev = snapshot[idx];
+    if (prev.mtime === meta.mtime && prev.preview === meta.preview) return false;
+    snapshot[idx] = meta;
+  } else {
+    snapshot.push(meta);
+  }
+  snapshot.sort((a, b) => b.mtime - a.mtime);
+  return true;
+}
+
+async function handleChange(relPath: string) {
+  const norm = relPath.replace(/\\/g, "/");
+  if (!norm.endsWith(".jsonl")) return;
+  const proj = norm.split("/")[0];
+  if (!proj) return;
+  const full = join(PROJECTS_DIR, relPath);
+
+  const prevLatest = snapshot[0]?.path ?? null;
+  const changed = await syncFile(full, proj);
+  const latest = snapshot[0]?.path ?? null;
+
+  if (changed) broadcastSessions();
+
   for (const sub of subs) {
+    const target = sub.mode === "latest" ? latest : sub.pinned ?? null;
+    const isAffected =
+      target === full ||
+      (sub.mode === "latest" && latest !== prevLatest);
+    if (!isAffected) continue;
     try { await processSub(sub, latest); }
     catch (err) { console.error("sub error:", err); }
   }
 }
 
-setInterval(() => { tick().catch(err => console.error("tick:", err)); }, POLL_MS);
-tick().catch(err => console.error("init:", err));
+const pendingChanges = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleChange(relPath: string) {
+  const existing = pendingChanges.get(relPath);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    pendingChanges.delete(relPath);
+    handleChange(relPath).catch(err => console.error("handleChange:", err));
+  }, DEBOUNCE_MS);
+  pendingChanges.set(relPath, t);
+}
 
-const html = await Bun.file(new URL("./index.html", import.meta.url)).text();
+await initialScan();
+
+try {
+  const watcher = watch(PROJECTS_DIR, { recursive: true }, (_evt, filename) => {
+    if (!filename) return;
+    const name = typeof filename === "string" ? filename : filename.toString();
+    if (!name.endsWith(".jsonl")) return;
+    scheduleChange(name);
+  });
+  watcher.on("error", err => console.error("watcher error:", err));
+} catch (err) {
+  console.error(`watcher failed for ${PROJECTS_DIR}:`, err);
+}
+
+const HTML_PATH = new URL("./index.html", import.meta.url);
+async function loadHtml(): Promise<string> {
+  return await Bun.file(HTML_PATH).text();
+}
+
+const CORS_HEADERS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-headers": "*",
+  "access-control-allow-private-network": "true",
+};
+
+function withCors(res: Response): Response {
+  for (const [k, v] of Object.entries(CORS_HEADERS)) res.headers.set(k, v);
+  return res;
+}
 
 Bun.serve({
   port: PORT,
@@ -258,18 +351,24 @@ Bun.serve({
   fetch(req) {
     const url = new URL(req.url);
 
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: CORS_HEADERS });
+    }
+
     if (url.pathname === "/" || url.pathname === "/index.html") {
-      return new Response(html, { headers: { "content-type": "text/html; charset=utf-8" } });
+      return loadHtml().then(html => withCors(new Response(html, {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })));
     }
 
     if (url.pathname === "/api/sessions") {
-      return Response.json(snapshot);
+      return withCors(Response.json(snapshot));
     }
 
     if (url.pathname === "/api/search") {
       const q = url.searchParams.get("q") ?? "";
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 60)));
-      return search(q, limit).then(hits => Response.json(hits));
+      return search(q, limit).then(hits => withCors(Response.json(hits)));
     }
 
     if (url.pathname === "/events") {
@@ -293,17 +392,17 @@ Bun.serve({
         },
         cancel() { subs.delete(sub); },
       });
-      return new Response(stream, {
+      return withCors(new Response(stream, {
         headers: {
           "content-type": "text/event-stream; charset=utf-8",
           "cache-control": "no-cache, no-transform",
           "connection": "keep-alive",
           "x-accel-buffering": "no",
         },
-      });
+      }));
     }
 
-    return new Response("not found", { status: 404 });
+    return withCors(new Response("not found", { status: 404 }));
   },
 });
 

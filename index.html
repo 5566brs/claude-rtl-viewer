@@ -95,6 +95,17 @@
   }
   .msg.user { background: var(--user-bg); }
   .msg.assistant { background: var(--panel); border: 1px solid var(--border); }
+  .msg.tool {
+    margin: 4px 0 10px;
+    padding: 3px 12px;
+    border-radius: 0;
+    border-inline-start: 2px solid var(--border-strong);
+    background: transparent;
+    color: var(--muted);
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-size: 11px;
+    letter-spacing: 0.2px;
+  }
   .role {
     font-size: 10px;
     text-transform: uppercase;
@@ -328,6 +339,69 @@
     0%   { box-shadow: 0 0 0 3px #ffe89e; }
     100% { box-shadow: 0 0 0 0 transparent; }
   }
+
+  .source-bar {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+    direction: rtl;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .source-tabs {
+    display: flex;
+    gap: 2px;
+    background: var(--panel-2);
+    padding: 2px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+  }
+  .src-tab {
+    flex: 1;
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .src-tab.active {
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: 0 0 0 1px var(--border-strong);
+  }
+  .src-tab:not(.active):hover { color: var(--text); }
+  #local-controls {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  #local-controls button {
+    border: 1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 4px 9px;
+    font-size: 11px;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  #local-controls button:hover { background: var(--hover); }
+  .local-status {
+    font-size: 10px;
+    color: var(--muted);
+    font-family: ui-monospace, monospace;
+    flex: 1;
+    text-align: start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .local-status.warn { color: #a33; }
 </style>
 </head>
 <body dir="auto">
@@ -345,6 +419,16 @@
     <div class="sidebar-header">
       <span class="sidebar-title">שיחות</span>
       <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
+    </div>
+    <div class="source-bar">
+      <div class="source-tabs" role="tablist">
+        <button class="src-tab active" data-source="server" type="button" role="tab">שרת מקומי</button>
+        <button class="src-tab" data-source="local" type="button" role="tab">תיקייה בדפדפן</button>
+      </div>
+      <div id="local-controls" hidden>
+        <button id="pick-folder" type="button">בחר תיקייה</button>
+        <span id="local-status" class="local-status"></span>
+      </div>
     </div>
     <div class="sidebar-search">
       <input id="search-input" type="search" placeholder="חיפוש בכל השיחות…" />
@@ -378,21 +462,85 @@
     catch { return "<pre>" + escapeHtml(text) + "</pre>"; }
   }
 
+  // ---------- jsonl parsing (mirrors server.ts) ----------
+  const AUTO_BLOCK_PATTERNS = [
+    /<system-reminder>[\s\S]*?<\/system-reminder>/g,
+    /<command-[a-z-]+>[\s\S]*?<\/command-[a-z-]+>/g,
+    /<local-command-[a-z-]+>[\s\S]*?<\/local-command-[a-z-]+>/g,
+    /<user-prompt-submit-hook>[\s\S]*?<\/user-prompt-submit-hook>/g,
+    /<ide_[a-z_]+>[\s\S]*?<\/ide_[a-z_]+>/g,
+  ];
+  function cleanUserText(text) {
+    for (const re of AUTO_BLOCK_PATTERNS) text = text.replace(re, "");
+    return text.trim();
+  }
+  function parseLine(line) {
+    let obj;
+    try { obj = JSON.parse(line); } catch { return []; }
+    if (obj.isSidechain) return [];
+
+    if (obj.type === "user" && obj.message?.content != null) {
+      const c = obj.message.content;
+      let text = "";
+      if (typeof c === "string") text = c;
+      else if (Array.isArray(c)) {
+        text = c.filter(p => p?.type === "text" && typeof p.text === "string")
+          .map(p => p.text).join("\n");
+      }
+      text = cleanUserText(text);
+      if (!text) return [];
+      if (/^<(ide_|command-|local-command-)/.test(text)) return [];
+      return [{ uuid: obj.uuid, role: "user", text, timestamp: obj.timestamp }];
+    }
+
+    if (obj.type === "assistant" && Array.isArray(obj.message?.content)) {
+      const out = [];
+      const text = obj.message.content
+        .filter(p => p?.type === "text" && typeof p.text === "string")
+        .map(p => p.text).join("\n").trim();
+      if (text) out.push({ uuid: obj.uuid, role: "assistant", text, timestamp: obj.timestamp });
+
+      const tools = obj.message.content
+        .filter(p => p?.type === "tool_use" && typeof p.name === "string")
+        .map(p => p.name);
+      if (tools.length) {
+        out.push({
+          uuid: text ? `${obj.uuid}#t` : obj.uuid,
+          role: "tool",
+          text: tools.join(", "),
+          timestamp: obj.timestamp,
+          tools,
+        });
+      }
+      return out;
+    }
+
+    return [];
+  }
+  function parseJsonl(text) {
+    const seen = new Set();
+    const out = [];
+    for (const line of text.split("\n")) {
+      if (!line) continue;
+      for (const m of parseLine(line)) {
+        if (!seen.has(m.uuid)) { seen.add(m.uuid); out.push(m); }
+      }
+    }
+    return out;
+  }
+
+  // ---------- shared DOM + render ----------
   const messagesEl = document.getElementById("messages");
   const sessionsEl = document.getElementById("sessions");
   const statusEl = document.getElementById("status");
   const fileEl = document.getElementById("file");
   const emptyEl = document.getElementById("empty");
   const latestBtn = document.getElementById("latest-btn");
+  const localControlsEl = document.getElementById("local-controls");
+  const localStatusEl = document.getElementById("local-status");
+  const pickFolderBtn = document.getElementById("pick-folder");
 
   const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th";
-
-  let es = null;
-  let mode = "latest";          // "latest" | "pinned"
-  let pinnedFile = null;        // path when pinned
-  let activeFile = null;        // file currently being rendered (from server reset)
-  let sessionsList = [];
-  let pendingScrollUuid = null; // uuid to scroll to after next reset
 
   const rtf = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
   function relTime(ms) {
@@ -405,7 +553,6 @@
     if (abs < 86400 * 365) return rtf.format(Math.round(diff / (86400 * 30)), "month");
     return rtf.format(Math.round(diff / (86400 * 365)), "year");
   }
-
   function projectLabel(proj) {
     return proj.replace(/^C--Users-eli-?/, "~/").replace(/-+/g, "/").replace(/\/$/, "") || "~";
   }
@@ -413,34 +560,48 @@
   function renderMessage(m) {
     const div = document.createElement("div");
     div.className = "msg " + m.role;
-    div.dir = "auto";
     div.dataset.uuid = m.uuid;
-
+    if (m.role === "tool") {
+      div.dir = "ltr";
+      div.textContent = m.text;
+      return div;
+    }
+    div.dir = "auto";
     const role = document.createElement("div");
     role.className = "role";
     role.textContent = m.role;
-
     const body = document.createElement("div");
     body.className = "body";
     body.dir = "auto";
     body.innerHTML = renderMarkdown(m.text);
     body.querySelectorAll(RTL_TAGS).forEach(el => { el.dir = "auto"; });
-
     div.append(role, body);
     return div;
   }
-
   function nearBottom() {
     return window.innerHeight + window.scrollY >= document.body.offsetHeight - 120;
   }
 
-  function reset(payload) {
+  // ---------- app state ----------
+  let mode = "latest";          // "latest" | "pinned"
+  let pinnedFile = null;
+  let activeFile = null;
+  let sessionsList = [];
+  let pendingScrollUuid = null;
+  let source = null;            // current Source instance
+
+  function setStatus(s, cls) {
+    statusEl.textContent = s;
+    statusEl.classList.remove("live", "dead");
+    if (cls) statusEl.classList.add(cls);
+  }
+
+  function applyReset(payload) {
     activeFile = payload.file || null;
     fileEl.textContent = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
     messagesEl.innerHTML = "";
     for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
     emptyEl.style.display = payload.messages.length ? "none" : "block";
-
     if (pendingScrollUuid) {
       const target = messagesEl.querySelector(`[data-uuid="${CSS.escape(pendingScrollUuid)}"]`);
       pendingScrollUuid = null;
@@ -459,7 +620,7 @@
     paintSidebar();
   }
 
-  function append(m) {
+  function applyAppend(m) {
     const stick = nearBottom();
     messagesEl.appendChild(renderMessage(m));
     emptyEl.style.display = "none";
@@ -474,12 +635,10 @@
       item.dataset.path = s.path;
       if (s.path === activeFile) item.classList.add("active");
       if (mode === "latest" && s === sessionsList[0]) item.classList.add("live");
-
       const preview = document.createElement("div");
       preview.className = "session-preview";
       preview.dir = "auto";
       preview.textContent = s.preview || "(שיחה ריקה)";
-
       const meta = document.createElement("div");
       meta.className = "session-meta";
       const proj = document.createElement("span");
@@ -489,7 +648,6 @@
       time.className = "session-time";
       time.textContent = relTime(s.mtime);
       meta.append(proj, time);
-
       item.append(preview, meta);
       item.addEventListener("click", () => pinTo(s.path));
       sessionsEl.appendChild(item);
@@ -497,40 +655,457 @@
     latestBtn.classList.toggle("active", mode === "latest");
   }
 
-  function setStatus(s, cls) {
-    statusEl.textContent = s;
-    statusEl.classList.remove("live", "dead");
-    if (cls) statusEl.classList.add(cls);
-  }
-
-  function connect() {
-    if (es) es.close();
-    const qs = mode === "pinned" && pinnedFile ? `?file=${encodeURIComponent(pinnedFile)}` : "";
-    es = new EventSource("/events" + qs);
-    es.addEventListener("ready", () => setStatus("live", "live"));
-    es.addEventListener("sessions", e => {
-      sessionsList = JSON.parse(e.data);
-      paintSidebar();
-    });
-    es.addEventListener("reset", e => reset(JSON.parse(e.data)));
-    es.addEventListener("append", e => append(JSON.parse(e.data)));
-    es.onerror = () => setStatus("reconnecting…", "dead");
-  }
+  const handlers = {
+    onStatus: setStatus,
+    onSessions(list) { sessionsList = list; paintSidebar(); },
+    onReset: applyReset,
+    onAppend: applyAppend,
+  };
 
   function pinTo(path) {
-    mode = "pinned";
-    pinnedFile = path;
-    connect();
+    mode = "pinned"; pinnedFile = path;
+    if (source) source.setPinned(path);
     paintSidebar();
   }
   function followLatest() {
-    mode = "latest";
-    pinnedFile = null;
-    connect();
+    mode = "latest"; pinnedFile = null;
+    if (source) source.setLatestMode();
     paintSidebar();
   }
-
   latestBtn.addEventListener("click", followLatest);
+
+  // ---------- ServerSource (SSE + /api) ----------
+  class ServerSource {
+    constructor(handlers, baseUrl = "") {
+      this.handlers = handlers;
+      this.baseUrl = baseUrl;
+      this.es = null;
+      this.mode = "latest";
+      this.pinned = null;
+    }
+    start() { this._connect(); }
+    setLatestMode() { this.mode = "latest"; this.pinned = null; this._connect(); }
+    setPinned(path) { this.mode = "pinned"; this.pinned = path; this._connect(); }
+    async search(q, limit = 60) {
+      const res = await fetch(`${this.baseUrl}/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
+      return await res.json();
+    }
+    destroy() { if (this.es) this.es.close(); this.es = null; }
+    _connect() {
+      if (this.es) this.es.close();
+      const qs = this.mode === "pinned" && this.pinned ? `?file=${encodeURIComponent(this.pinned)}` : "";
+      const es = new EventSource(`${this.baseUrl}/events${qs}`);
+      es.addEventListener("ready", () => this.handlers.onStatus("live", "live"));
+      es.addEventListener("sessions", e => this.handlers.onSessions(JSON.parse(e.data)));
+      es.addEventListener("reset", e => this.handlers.onReset(JSON.parse(e.data)));
+      es.addEventListener("append", e => this.handlers.onAppend(JSON.parse(e.data)));
+      es.onerror = () => this.handlers.onStatus("reconnecting…", "dead");
+      this.es = es;
+    }
+  }
+
+  // ---------- LocalSource (File System Access + Observer) ----------
+  class LocalSource {
+    constructor(handlers, dirHandle) {
+      this.handlers = handlers;
+      this.dirHandle = dirHandle;
+      this.mode = "latest";
+      this.pinned = null;
+      this.sessions = [];
+      this.fileHandles = new Map();        // path -> FileSystemFileHandle
+      this.fileSizes = new Map();          // path -> last seen size
+      this.fileMessages = new Map();       // path -> { mtime, messages }
+      this.observer = null;
+      this.currentTarget = null;
+      this.coalesceTimer = null;
+    }
+
+    async start() {
+      this.handlers.onStatus("scanning…", "");
+      try { await this._initialScan(); }
+      catch (err) {
+        console.error("scan:", err);
+        this.handlers.onStatus("scan failed", "dead");
+        return;
+      }
+      this.handlers.onSessions(this.sessions);
+      await this._activateTarget();
+
+      if (!("FileSystemObserver" in window)) {
+        this.handlers.onStatus("no observer", "dead");
+        return;
+      }
+      try {
+        this.observer = new FileSystemObserver((records) => this._onRecords(records));
+        await this.observer.observe(this.dirHandle, { recursive: true });
+        this.handlers.onStatus("live", "live");
+      } catch (err) {
+        console.error("observe:", err);
+        this.handlers.onStatus("observe failed", "dead");
+      }
+    }
+
+    setLatestMode() { this.mode = "latest"; this.pinned = null; this._activateTarget(); }
+    setPinned(path) { this.mode = "pinned"; this.pinned = path; this._activateTarget(); }
+
+    async search(q, limit = 60) {
+      const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+      if (!terms.length) return [];
+      const hits = [];
+      for (const s of this.sessions) {
+        let messages;
+        try { messages = await this._getMessages(s.path); } catch { continue; }
+        for (const m of messages) {
+          const lower = m.text.toLowerCase();
+          let totalCount = 0;
+          let firstIdx = -1;
+          let ok = true;
+          for (const term of terms) {
+            let idx = lower.indexOf(term);
+            if (idx === -1) { ok = false; break; }
+            if (firstIdx === -1 || idx < firstIdx) firstIdx = idx;
+            while (idx !== -1) { totalCount++; idx = lower.indexOf(term, idx + term.length); }
+          }
+          if (!ok) continue;
+          const start = Math.max(0, firstIdx - 80);
+          const end = Math.min(m.text.length, firstIdx + 220);
+          const snippet =
+            (start > 0 ? "…" : "") +
+            m.text.slice(start, end).replace(/\s+/g, " ") +
+            (end < m.text.length ? "…" : "");
+          hits.push({
+            path: s.path, project: s.project, uuid: m.uuid,
+            role: m.role, timestamp: m.timestamp, snippet, score: totalCount,
+          });
+        }
+      }
+      hits.sort((a, b) => b.score - a.score || (b.timestamp || "").localeCompare(a.timestamp || ""));
+      return hits.slice(0, limit);
+    }
+
+    destroy() {
+      if (this.observer) {
+        try { this.observer.disconnect(); } catch {}
+        this.observer = null;
+      }
+      if (this.coalesceTimer) { clearTimeout(this.coalesceTimer); this.coalesceTimer = null; }
+    }
+
+    async _initialScan() {
+      const sessions = [];
+      this.fileHandles.clear();
+      for await (const [projName, projHandle] of this.dirHandle.entries()) {
+        if (projHandle.kind !== "directory") continue;
+        for await (const [fileName, fileHandle] of projHandle.entries()) {
+          if (fileHandle.kind !== "file" || !fileName.endsWith(".jsonl")) continue;
+          const path = `${projName}/${fileName}`;
+          this.fileHandles.set(path, fileHandle);
+          let file;
+          try { file = await fileHandle.getFile(); } catch { continue; }
+          const preview = await this._readPreview(file);
+          sessions.push({ path, project: projName, mtime: file.lastModified, preview });
+        }
+      }
+      sessions.sort((a, b) => b.mtime - a.mtime);
+      this.sessions = sessions;
+    }
+
+    async _readPreview(file) {
+      try {
+        const text = await file.slice(0, 32 * 1024).text();
+        for (const line of text.split("\n")) {
+          if (!line) continue;
+          for (const m of parseLine(line)) {
+            if (m.role === "user") return m.text.slice(0, 240);
+          }
+        }
+      } catch {}
+      return "";
+    }
+
+    async _getMessages(path) {
+      const handle = this.fileHandles.get(path);
+      if (!handle) return [];
+      const file = await handle.getFile();
+      const cached = this.fileMessages.get(path);
+      if (cached && cached.mtime === file.lastModified) return cached.messages;
+      const text = await file.text();
+      const messages = parseJsonl(text);
+      this.fileMessages.set(path, { mtime: file.lastModified, messages });
+      return messages;
+    }
+
+    async _activateTarget() {
+      const target = this.mode === "latest" ? (this.sessions[0]?.path ?? null) : this.pinned;
+      this.currentTarget = target;
+      if (!target) {
+        this.handlers.onReset({ file: null, mode: this.mode, messages: [] });
+        return;
+      }
+      const handle = this.fileHandles.get(target);
+      if (!handle) {
+        this.handlers.onReset({ file: null, mode: this.mode, messages: [] });
+        return;
+      }
+      const file = await handle.getFile();
+      this.fileSizes.set(target, file.size);
+      const messages = await this._getMessages(target);
+      this.handlers.onReset({ file: target, mode: this.mode, messages });
+    }
+
+    // FileSystemObserver fires bursts during rapid writes. Coalesce a short window
+    // so a single tail-read picks up everything new.
+    _onRecords(records) {
+      for (const rec of records) this._stageRecord(rec);
+      if (this.coalesceTimer) return;
+      this.coalesceTimer = setTimeout(() => {
+        this.coalesceTimer = null;
+        this._flush().catch(err => console.error("flush:", err));
+      }, 30);
+    }
+
+    _stageRecord(rec) {
+      const rel = (rec.relativePathComponents ?? []).join("/");
+      if (!rel || !rel.endsWith(".jsonl")) return;
+      this._dirty ??= new Map();
+      const prev = this._dirty.get(rel);
+      // disappeared takes priority; otherwise keep the latest known handle
+      if (rec.type === "disappeared") this._dirty.set(rel, { type: "disappeared" });
+      else if (!prev || prev.type !== "disappeared") {
+        this._dirty.set(rel, { type: rec.type, handle: rec.changedHandle });
+      }
+    }
+
+    async _flush() {
+      const dirty = this._dirty;
+      this._dirty = new Map();
+      if (!dirty || !dirty.size) return;
+
+      const prevLatest = this.sessions[0]?.path ?? null;
+      let sessionsChanged = false;
+      let appendsForCurrent = [];
+      let needsResetCurrent = false;
+
+      for (const [rel, info] of dirty) {
+        const proj = rel.split("/")[0];
+        if (!proj) continue;
+
+        if (info.type === "disappeared") {
+          if (this.fileHandles.has(rel)) {
+            this.fileHandles.delete(rel);
+            this.fileMessages.delete(rel);
+            this.fileSizes.delete(rel);
+            this.sessions = this.sessions.filter(s => s.path !== rel);
+            sessionsChanged = true;
+            if (this.currentTarget === rel) needsResetCurrent = true;
+          }
+          continue;
+        }
+
+        let handle = this.fileHandles.get(rel);
+        if (!handle && info.handle && info.handle.kind === "file") {
+          handle = info.handle;
+          this.fileHandles.set(rel, handle);
+        }
+        if (!handle) continue;
+
+        let file;
+        try { file = await handle.getFile(); } catch { continue; }
+
+        const preview = await this._readPreview(file);
+        const idx = this.sessions.findIndex(s => s.path === rel);
+        const meta = { path: rel, project: proj, mtime: file.lastModified, preview };
+        if (idx >= 0) {
+          const prev = this.sessions[idx];
+          if (prev.mtime !== meta.mtime || prev.preview !== meta.preview) {
+            this.sessions[idx] = meta;
+            sessionsChanged = true;
+          }
+        } else {
+          this.sessions.push(meta);
+          sessionsChanged = true;
+        }
+
+        if (this.currentTarget === rel) {
+          const lastSize = this.fileSizes.get(rel) ?? 0;
+          if (file.size < lastSize) {
+            needsResetCurrent = true;
+            this.fileSizes.set(rel, file.size);
+            this.fileMessages.delete(rel);
+          } else if (file.size > lastSize) {
+            const slice = await file.slice(lastSize, file.size).text();
+            this.fileSizes.set(rel, file.size);
+            for (const line of slice.split("\n")) {
+              if (!line) continue;
+              for (const m of parseLine(line)) appendsForCurrent.push(m);
+            }
+          }
+        }
+      }
+
+      if (sessionsChanged) {
+        this.sessions.sort((a, b) => b.mtime - a.mtime);
+        this.handlers.onSessions(this.sessions);
+      }
+
+      if (this.mode === "latest") {
+        const latest = this.sessions[0]?.path ?? null;
+        if (latest !== this.currentTarget) {
+          await this._activateTarget();
+          return;
+        }
+        // first sessions broadcast may have happened with prevLatest still null
+        if (!prevLatest && latest) {
+          await this._activateTarget();
+          return;
+        }
+      }
+
+      if (needsResetCurrent) { await this._activateTarget(); return; }
+
+      if (appendsForCurrent.length) {
+        const cached = this.fileMessages.get(this.currentTarget);
+        const seen = new Set(cached?.messages.map(m => m.uuid) ?? []);
+        for (const m of appendsForCurrent) {
+          if (seen.has(m.uuid)) continue;
+          seen.add(m.uuid);
+          this.handlers.onAppend(m);
+          if (cached) cached.messages.push(m);
+        }
+      }
+    }
+  }
+
+  // ---------- IndexedDB helpers (persist directory handle) ----------
+  function idb(mode) {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open("rtl-viewer", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("kv");
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const db = req.result;
+        const tx = db.transaction("kv", mode);
+        resolve(tx.objectStore("kv"));
+      };
+    });
+  }
+  async function idbGet(key) {
+    const store = await idb("readonly");
+    return new Promise((resolve, reject) => {
+      const r = store.get(key);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  }
+  async function idbSet(key, value) {
+    const store = await idb("readwrite");
+    return new Promise((resolve, reject) => {
+      const r = store.put(value, key);
+      r.onsuccess = () => resolve();
+      r.onerror = () => reject(r.error);
+    });
+  }
+
+  // ---------- source switching ----------
+  const SOURCE_KEY = "rtl-viewer:source";
+  const DIR_KEY = "rtl-viewer:dir";
+
+  function setSourceTab(name) {
+    document.querySelectorAll(".src-tab").forEach(b => {
+      b.classList.toggle("active", b.dataset.source === name);
+    });
+    localControlsEl.hidden = name !== "local";
+  }
+
+  function setLocalStatus(text, warn = false) {
+    localStatusEl.textContent = text;
+    localStatusEl.classList.toggle("warn", warn);
+  }
+
+  function startSource(newSource) {
+    if (source) source.destroy();
+    source = newSource;
+    sessionsList = [];
+    activeFile = null;
+    messagesEl.innerHTML = "";
+    fileEl.textContent = "";
+    emptyEl.style.display = "block";
+    paintSidebar();
+    if (mode === "pinned" && pinnedFile) source.setPinned?.(pinnedFile);
+    source.start();
+  }
+
+  async function useServer() {
+    setSourceTab("server");
+    setLocalStatus("");
+    localStorage.setItem(SOURCE_KEY, "server");
+    startSource(new ServerSource(handlers));
+  }
+
+  async function useLocal(dirHandle, opts = {}) {
+    if (!("FileSystemObserver" in window)) {
+      setLocalStatus("FileSystemObserver לא נתמך בדפדפן הזה", true);
+      return false;
+    }
+    setSourceTab("local");
+    setLocalStatus(opts.label || "תיקייה נבחרה");
+    localStorage.setItem(SOURCE_KEY, "local");
+    try { await idbSet(DIR_KEY, dirHandle); } catch (err) { console.error("idbSet:", err); }
+    startSource(new LocalSource(handlers, dirHandle));
+    return true;
+  }
+
+  async function pickFolder() {
+    if (!("showDirectoryPicker" in window)) {
+      setLocalStatus("showDirectoryPicker לא נתמך", true);
+      return;
+    }
+    let dirHandle;
+    try {
+      dirHandle = await window.showDirectoryPicker({ id: "claude-projects", mode: "read" });
+    } catch { return; }
+    await useLocal(dirHandle, { label: dirHandle.name });
+  }
+
+  async function tryRehydrateLocal() {
+    const stored = await idbGet(DIR_KEY).catch(() => null);
+    if (!stored) return false;
+    try {
+      const perm = await stored.queryPermission?.({ mode: "read" });
+      if (perm === "granted") return await useLocal(stored, { label: stored.name });
+      // Need a user gesture to re-grant — switch to local tab and prompt
+      setSourceTab("local");
+      setLocalStatus(`לחץ "בחר תיקייה" כדי לחדש הרשאה ל-${stored.name}`, true);
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  pickFolderBtn.addEventListener("click", pickFolder);
+  document.querySelectorAll(".src-tab").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const src = btn.dataset.source;
+      if (src === "server") return useServer();
+      // src === "local"
+      setSourceTab("local");
+      const ok = await tryRehydrateLocal();
+      if (!ok && !source?.constructor?.name?.startsWith?.("Local")) {
+        // no stored handle (or denied) — leave server source running until user picks
+        if (!localStatusEl.textContent) setLocalStatus("בחר תיקייה כדי להתחיל");
+      }
+    });
+  });
+
+  async function init() {
+    const pref = localStorage.getItem(SOURCE_KEY);
+    if (pref === "local") {
+      const ok = await tryRehydrateLocal();
+      if (ok) return;
+    }
+    await useServer();
+  }
+  init();
 
   // ---------- search ----------
   const searchInput = document.getElementById("search-input");
@@ -559,7 +1134,6 @@
     for (const hit of hits) {
       const item = document.createElement("div");
       item.className = "search-hit";
-
       const meta = document.createElement("div");
       meta.className = "hit-meta";
       const role = document.createElement("span");
@@ -572,17 +1146,14 @@
       time.className = "hit-time";
       time.textContent = hit.timestamp ? relTime(new Date(hit.timestamp).getTime()) : "";
       meta.append(role, proj, time);
-
       const snip = document.createElement("div");
       snip.className = "hit-snippet";
       snip.dir = "auto";
       snip.innerHTML = highlightMatches(hit.snippet, q);
-
       item.append(meta, snip);
       item.addEventListener("click", () => {
         pendingScrollUuid = hit.uuid;
         if (hit.path === activeFile && mode === "pinned") {
-          // already on this session — scroll directly
           const target = messagesEl.querySelector(`[data-uuid="${CSS.escape(hit.uuid)}"]`);
           pendingScrollUuid = null;
           if (target) {
@@ -604,8 +1175,7 @@
     searchResultsEl.hidden = false;
     searchResultsEl.innerHTML = `<div class="search-status">מחפש…</div>`;
     try {
-      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}`);
-      const hits = await res.json();
+      const hits = source ? await source.search(q, 60) : [];
       if (reqId !== searchReqId) return;
       renderSearchResults(hits, q);
     } catch {
@@ -629,7 +1199,6 @@
     if (q === lastQuery) return;
     searchTimer = setTimeout(() => { lastQuery = q; runSearch(q); }, 220);
   });
-
   searchInput.addEventListener("keydown", e => {
     if (e.key === "Escape") {
       searchInput.value = "";
@@ -637,8 +1206,6 @@
       searchInput.blur();
     }
   });
-
-  connect();
 
   // Refresh relative times every 30s without a full repaint
   setInterval(() => {
