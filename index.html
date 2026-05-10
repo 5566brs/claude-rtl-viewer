@@ -32,17 +32,18 @@
   }
 
   .layout {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 18px 20px 60px;
     display: grid;
     grid-template-columns: 1fr 320px;
     gap: 20px;
-    max-width: 1240px;
-    margin: 0 auto;
-    padding: 18px 20px 80px;
     align-items: start;
   }
   @media (max-width: 880px) {
     .layout { grid-template-columns: 1fr; padding: 12px; }
-    .sidebar { position: static !important; max-height: 280px !important; }
+    .sidebar { position: static !important; max-height: 280px !important; height: auto !important; inset: auto !important; width: auto !important; }
+    .sidebar-spacer { display: none !important; }
   }
 
   /* Main */
@@ -88,8 +89,8 @@
   #status.dead { background: #f1d4d4; color: #a33; }
 
   .msg {
-    margin: 0 0 14px;
-    padding: 14px 18px;
+    margin: 0 0 16px;
+    padding: 18px 22px;
     border-radius: 12px;
     word-wrap: break-word;
     overflow-wrap: anywhere;
@@ -375,7 +376,11 @@
   .body pre code { background: none; padding: 0; font-size: 1em; }
   .body a { color: #1a5fb4; }
   .body table { border-collapse: collapse; margin: 0.5em 0; }
-  .body th, .body td { border: 1px solid var(--border); padding: 4px 8px; }
+  .body th, .body td {
+    border: 1px solid var(--border);
+    padding: 4px 8px;
+    text-align: start;
+  }
 
   #empty {
     text-align: center;
@@ -385,14 +390,21 @@
   }
 
   /* Sidebar */
+  .sidebar-spacer {
+    /* placeholder so the grid keeps its 1fr/320px geometry while the
+       real sidebar is position:fixed and out of flow */
+    width: 320px;
+  }
   .sidebar {
     background: var(--panel-2);
     border: 1px solid var(--border);
     border-radius: 12px;
     overflow: hidden;
-    position: sticky;
-    top: 14px;
-    max-height: calc(100vh - 28px);
+    position: fixed;
+    top: 18px;
+    width: 320px;
+    height: calc(100vh - 36px);
+    inset-inline-end: max(20px, calc((100vw - 1240px) / 2 + 20px));
     display: flex;
     flex-direction: column;
   }
@@ -777,6 +789,7 @@
     <div id="messages"></div>
     <div id="empty">ממתין לשיחה…</div>
   </main>
+  <div class="sidebar-spacer" aria-hidden="true"></div>
   <aside class="sidebar">
     <div class="sidebar-header">
       <span class="sidebar-title">שיחות</span>
@@ -902,7 +915,7 @@
   const sourceSummaryEl = document.getElementById("source-summary");
   const changeSourceBtn = document.getElementById("change-source-btn");
 
-  const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th";
+  const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,table";
 
   const rtf = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
   function relTime(ms) {
@@ -1314,6 +1327,9 @@
   function nearBottom() {
     return window.innerHeight + window.scrollY >= document.body.offsetHeight - 120;
   }
+  function scrollMainToBottom() {
+    window.scrollTo(0, document.body.scrollHeight);
+  }
 
   // ---------- app state ----------
   let mode = "latest";          // "latest" | "pinned"
@@ -1345,10 +1361,10 @@
           setTimeout(() => target.classList.remove("flash"), 1700);
         });
       } else {
-        requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+        requestAnimationFrame(scrollMainToBottom);
       }
     } else {
-      requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+      requestAnimationFrame(scrollMainToBottom);
     }
     paintSidebar();
   }
@@ -1357,7 +1373,7 @@
     const stick = nearBottom();
     messagesEl.appendChild(renderMessage(m));
     emptyEl.style.display = "none";
-    if (stick) requestAnimationFrame(() => window.scrollTo(0, document.body.scrollHeight));
+    if (stick) requestAnimationFrame(scrollMainToBottom);
   }
 
   function paintSidebar() {
