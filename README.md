@@ -41,9 +41,10 @@ bun run dev      # same, with hot reload via `bun --watch`
 
 Then open <http://localhost:5577>.
 
-The transcripts directory is hard-coded in [server.ts](server.ts) as
-`PROJECTS_DIR`. On a different machine, edit that constant directly — this is a
-single-user local tool, deliberately without a config layer.
+The transcripts directory defaults to `~/.claude/projects` (resolved from the
+current OS user's home). Override with the `CLAUDE_PROJECTS_DIR` env var if
+yours lives elsewhere — this is a single-user local tool, deliberately without
+a deeper config layer.
 
 ## License
 

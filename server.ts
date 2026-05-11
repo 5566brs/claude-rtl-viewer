@@ -1,8 +1,9 @@
 import { readdir, stat } from "node:fs/promises";
 import { watch } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 
-const PROJECTS_DIR = "C:/Users/eli/.claude/projects";
+const PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
 const PORT = Number(process.env.PORT ?? 5577);
 const DEBOUNCE_MS = 30;
 

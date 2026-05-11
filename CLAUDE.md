@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `bun run dev` — run with `bun --watch`. **Important caveat:** Bun's `--watch` only restarts when files in the import graph change. `index.html` is loaded via `Bun.file(...).text()` per request, not imported, so edits to it are picked up by a browser refresh, not a server restart. Edits to `server.ts` do trigger a restart.
 - No build, lint, or test setup. There is no `tsconfig.json`; Bun runs the TypeScript directly. The IDE will show many "Cannot find name 'Bun'/'process'/'node:fs'" diagnostics — that's expected without `@types/node` / `@types/bun` installed; runtime is fine.
 
-The server expects to find Claude Code transcripts at the hard-coded `PROJECTS_DIR = "C:/Users/eli/.claude/projects"` (see [server.ts:5](server.ts#L5)). When working on a different machine, change this constant rather than adding indirection — this is a single-user local tool.
+The server resolves the transcripts directory as `process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects")` (see [server.ts:6](server.ts#L6)). The env var is the escape hatch; otherwise it follows the current OS user's home — no per-machine edits needed. This is still a single-user local tool.
 
 ## Architecture
 
@@ -78,7 +78,7 @@ All responses include `Access-Control-Allow-Origin: *` plus `Access-Control-Allo
 - **Disk-only by design.** The viewer reads `.jsonl` files after Claude Code flushes content blocks; it cannot show token-by-token streaming and that is intentional. Don't try to parse partial JSON to fake live thinking — if a "currently writing" hint is needed, drive it from file `mtime` movement, not partial content. True streaming would require the Claude Agent SDK or a VS Code extension host, which is out of scope for this tool.
 - **Search is AND-of-words, ranked by total occurrences.** Every whitespace-separated term must appear in a message; score is total match count across terms; ties break by `timestamp` desc. This is a deliberate choice over OR/fuzzy/embedding search.
 - **Styling is a placeholder pending the official Claude Code VS Code extension CSS.** The intent is for this UI to mirror that panel with RTL added on top. Don't invent a new palette or add a dark-mode toggle on your own — ask for a screenshot or the extension's CSS first.
-- **Single-user local tool, Windows paths.** No multi-user, no auth, no shared deployment. The hard-coded `PROJECTS_DIR` is fine; do not generalize it into config unless asked. Hosting `index.html` on an HTTPS domain is in scope (so the page can run anywhere and either reach a localhost server or use the in-browser FS source) — but the *server* still expects to run on the user's own machine against their own `.claude/projects`.
+- **Single-user local tool.** No multi-user, no auth, no shared deployment. `PROJECTS_DIR` is derived from `homedir()` with a `CLAUDE_PROJECTS_DIR` env var override — don't add more config layers on top. Hosting `index.html` on an HTTPS domain is in scope (so the page can run anywhere and either reach a localhost server or use the in-browser FS source) — but the *server* still expects to run on the user's own machine against their own `.claude/projects`.
 - **Chrome/Edge are the target browsers.** `LocalSource` depends on File System Access API and `FileSystemObserver`, neither of which is in Firefox or Safari. That's accepted — `ServerSource` works everywhere and is the universal fallback.
 
 ## Working with this repo
