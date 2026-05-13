@@ -547,6 +547,16 @@
     margin-inline-start: 6px;
     vertical-align: middle;
   }
+  .session-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-bottom: 3px;
+    unicode-bidi: plaintext;
+  }
   .session-preview {
     font-size: 13px;
     line-height: 1.4;
@@ -1563,10 +1573,20 @@
     item.dataset.path = s.path;
     if (s.path === activeFile) item.classList.add("active");
     if (mode === "latest" && s === latestSession) item.classList.add("live");
+    const children = [];
+    if (s.title) {
+      const title = document.createElement("div");
+      title.className = "session-title";
+      title.dir = "auto";
+      title.textContent = s.title;
+      title.title = s.title;
+      children.push(title);
+    }
     const preview = document.createElement("div");
     preview.className = "session-preview";
     preview.dir = "auto";
     preview.textContent = s.preview || "(שיחה ריקה)";
+    children.push(preview);
     const meta = document.createElement("div");
     meta.className = "session-meta";
     if (withProject) {
@@ -1581,7 +1601,8 @@
     t.dataset.mtime = String(s.mtime);
     t.textContent = relTime(s.mtime);
     meta.appendChild(t);
-    item.append(preview, meta);
+    children.push(meta);
+    item.append(...children);
     item.addEventListener("click", () => pinTo(s.path));
     return item;
   }
@@ -1836,25 +1857,41 @@
           this.fileHandles.set(path, fileHandle);
           let file;
           try { file = await fileHandle.getFile(); } catch { continue; }
-          const preview = await this._readPreview(file);
-          sessions.push({ path, project: projName, mtime: file.lastModified, preview });
+          const { preview, title } = await this._readMeta(file);
+          const meta = { path, project: projName, mtime: file.lastModified, preview };
+          if (title) meta.title = title;
+          sessions.push(meta);
         }
       }
       sessions.sort((a, b) => b.mtime - a.mtime);
       this.sessions = sessions;
     }
 
-    async _readPreview(file) {
+    async _readMeta(file) {
+      let preview = "";
+      let title = "";
       try {
-        const text = await file.slice(0, 32 * 1024).text();
+        const text = await file.slice(0, 256 * 1024).text();
         for (const line of text.split("\n")) {
           if (!line) continue;
-          for (const m of parseLine(line)) {
-            if (m.role === "user") return m.text.slice(0, 240);
+          if (line.includes('"type":"ai-title"')) {
+            try {
+              const obj = JSON.parse(line);
+              if (obj?.type === "ai-title" && typeof obj.aiTitle === "string") {
+                const t = obj.aiTitle.trim();
+                if (t) title = t;
+              }
+            } catch {}
+            continue;
+          }
+          if (!preview) {
+            for (const m of parseLine(line)) {
+              if (m.role === "user") { preview = m.text.slice(0, 240); break; }
+            }
           }
         }
       } catch {}
-      return "";
+      return { preview, title };
     }
 
     async _getMessages(path) {
@@ -1946,12 +1983,13 @@
         let file;
         try { file = await handle.getFile(); } catch { continue; }
 
-        const preview = await this._readPreview(file);
+        const { preview, title } = await this._readMeta(file);
         const idx = this.sessions.findIndex(s => s.path === rel);
         const meta = { path: rel, project: proj, mtime: file.lastModified, preview };
+        if (title) meta.title = title;
         if (idx >= 0) {
           const prev = this.sessions[idx];
-          if (prev.mtime !== meta.mtime || prev.preview !== meta.preview) {
+          if (prev.mtime !== meta.mtime || prev.preview !== meta.preview || prev.title !== meta.title) {
             this.sessions[idx] = meta;
             sessionsChanged = true;
           }

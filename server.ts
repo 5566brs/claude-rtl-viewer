@@ -15,6 +15,7 @@ interface SessionMeta {
   project: string;
   mtime: number;
   preview: string;
+  title?: string;
 }
 
 const enc = new TextEncoder();
@@ -175,35 +176,55 @@ async function search(q: string, limit: number): Promise<SearchHit[]> {
   return hits.slice(0, limit);
 }
 
-async function readPreview(path: string): Promise<string> {
+async function readMeta(path: string): Promise<{ preview: string; title: string }> {
+  let preview = "";
+  let title = "";
   try {
-    const buf = await Bun.file(path).slice(0, 32 * 1024).arrayBuffer();
+    const buf = await Bun.file(path).slice(0, 256 * 1024).arrayBuffer();
     const text = dec.decode(buf);
     for (const line of text.split("\n")) {
       if (!line) continue;
-      for (const m of parseLine(line)) {
-        if (m.role === "user") return m.text.slice(0, 240);
+      if (line.includes('"type":"ai-title"')) {
+        try {
+          const obj = JSON.parse(line);
+          if (obj?.type === "ai-title" && typeof obj.aiTitle === "string") {
+            const t = obj.aiTitle.trim();
+            if (t) title = t;
+          }
+        } catch {}
+        continue;
+      }
+      if (!preview) {
+        for (const m of parseLine(line)) {
+          if (m.role === "user") { preview = m.text.slice(0, 240); break; }
+        }
       }
     }
   } catch {}
-  return "";
+  return { preview, title };
 }
 
-const previewCache = new Map<string, { mtime: number; preview: string }>();
+const metaCache = new Map<string, { mtime: number; preview: string; title: string }>();
 let snapshot: SessionMeta[] = [];
 
 async function readSessionMeta(full: string, proj: string): Promise<SessionMeta | null> {
   let s;
   try { s = await stat(full); } catch { return null; }
-  const cached = previewCache.get(full);
+  const cached = metaCache.get(full);
   let preview: string;
+  let title: string;
   if (cached && cached.mtime === s.mtimeMs) {
     preview = cached.preview;
+    title = cached.title;
   } else {
-    preview = await readPreview(full);
-    previewCache.set(full, { mtime: s.mtimeMs, preview });
+    const m = await readMeta(full);
+    preview = m.preview;
+    title = m.title;
+    metaCache.set(full, { mtime: s.mtimeMs, preview, title });
   }
-  return { path: full, project: proj, mtime: s.mtimeMs, preview };
+  const meta: SessionMeta = { path: full, project: proj, mtime: s.mtimeMs, preview };
+  if (title) meta.title = title;
+  return meta;
 }
 
 async function initialScan(): Promise<void> {
@@ -286,12 +307,12 @@ async function syncFile(full: string, proj: string): Promise<boolean> {
     if (idx < 0) return false;
     snapshot.splice(idx, 1);
     messageCache.delete(full);
-    previewCache.delete(full);
+    metaCache.delete(full);
     return true;
   }
   if (idx >= 0) {
     const prev = snapshot[idx];
-    if (prev.mtime === meta.mtime && prev.preview === meta.preview) return false;
+    if (prev.mtime === meta.mtime && prev.preview === meta.preview && prev.title === meta.title) return false;
     snapshot[idx] = meta;
   } else {
     snapshot.push(meta);
