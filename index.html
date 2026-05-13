@@ -441,6 +441,22 @@
     color: var(--accent);
   }
   .latest-btn:hover { background: var(--hover); }
+  .ghost-btn {
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 3px 7px;
+    font-size: 10px;
+    cursor: pointer;
+    font-family: inherit;
+    line-height: 1.4;
+  }
+  .ghost-btn:hover {
+    background: var(--hover);
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
 
   #sessions {
     overflow-y: auto;
@@ -893,6 +909,7 @@
       <span class="sidebar-title">שיחות</span>
       <div class="header-actions">
         <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
+        <button id="collapse-all-btn" class="ghost-btn" type="button" title="כווץ את כל הקבוצות" hidden>כווץ הכל</button>
         <button id="latest-btn" class="latest-btn active" type="button" title="מעבר לשיחה שמתעדכנת">חדשה ביותר</button>
       </div>
     </div>
@@ -1575,6 +1592,7 @@
     latestBtn.classList.toggle("active", mode === "latest");
     groupBtn.classList.toggle("active", groupByProject);
     groupBtn.setAttribute("aria-pressed", String(groupByProject));
+    collapseAllBtn.hidden = true;
     if (!sessionsList.length) return;
 
     const latestSession = sessionsList[0];
@@ -1594,6 +1612,7 @@
       if (s.mtime > g.maxMtime) g.maxMtime = s.mtime;
     }
     const ordered = [...groups.entries()].sort((a, b) => b[1].maxMtime - a[1].maxMtime);
+    collapseAllBtn.hidden = !ordered.some(([p]) => expandedProjects.has(p));
 
     for (const [project, g] of ordered) {
       const wrap = document.createElement("div");
@@ -1669,6 +1688,13 @@
   groupBtn.addEventListener("click", () => {
     groupByProject = !groupByProject;
     localStorage.setItem(GROUP_KEY, groupByProject ? "true" : "false");
+    paintSidebar();
+  });
+
+  const collapseAllBtn = document.getElementById("collapse-all-btn");
+  collapseAllBtn.addEventListener("click", () => {
+    expandedProjects.clear();
+    saveExpanded();
     paintSidebar();
   });
 
