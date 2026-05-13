@@ -334,11 +334,12 @@
     unicode-bidi: isolate;
   }
 
-  .body { unicode-bidi: plaintext; }
+  .body { unicode-bidi: isolate; }
   .body > *:first-child { margin-top: 0; }
   .body > *:last-child { margin-bottom: 0; }
-  .body p, .body li, .body h1, .body h2, .body h3, .body h4, .body blockquote {
-    unicode-bidi: plaintext;
+  .body p, .body li, .body h1, .body h2, .body h3, .body h4, .body h5, .body h6,
+  .body blockquote, .body ul, .body ol, .body table, .body td, .body th {
+    unicode-bidi: isolate;
   }
   .body p { margin: 0.55em 0; }
   .body h1, .body h2, .body h3, .body h4 { margin: 0.8em 0 0.4em; line-height: 1.3; }
@@ -892,7 +893,7 @@
       <span class="sidebar-title">שיחות</span>
       <div class="header-actions">
         <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
-        <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
+        <button id="latest-btn" class="latest-btn active" type="button" title="מעבר לשיחה שמתעדכנת">חדשה ביותר</button>
       </div>
     </div>
     <div class="source-bar">
@@ -1021,7 +1022,8 @@
   const sourceSummaryEl = document.getElementById("source-summary");
   const changeSourceBtn = document.getElementById("change-source-btn");
 
-  const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,table";
+  const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,table,ul,ol";
+  const HEBREW_RE = /[֐-׿יִ-ﭏ]/;
 
   const rtf = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
   function relTime(ms) {
@@ -1455,7 +1457,10 @@
     body.className = "body";
     body.dir = "auto";
     body.innerHTML = renderMarkdown(m.text);
-    body.querySelectorAll(RTL_TAGS).forEach(el => { el.dir = "auto"; });
+    body.dir = HEBREW_RE.test(m.text) ? "rtl" : "auto";
+    body.querySelectorAll(RTL_TAGS).forEach(el => {
+      el.dir = HEBREW_RE.test(el.textContent || "") ? "rtl" : "auto";
+    });
     div.append(role, body);
     return div;
   }
