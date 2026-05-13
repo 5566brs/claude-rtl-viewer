@@ -1517,17 +1517,16 @@
   function saveExpanded() {
     try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedProjects])); } catch {}
   }
-  // Auto-expand the project of the active session ONCE per activeFile change.
-  // After that, the user's explicit collapse is respected on subsequent repaints.
-  let lastAutoExpandedFor = null;
-  function ensureActiveExpanded() {
-    if (!activeFile || activeFile === lastAutoExpandedFor) return;
-    const s = sessionsList.find(s => s.path === activeFile);
-    if (s && !expandedProjects.has(s.project)) {
-      expandedProjects.add(s.project);
-      saveExpanded();
-    }
-    lastAutoExpandedFor = activeFile;
+  // Auto-expand the project of a given session path. Called ONLY on user-initiated
+  // navigation (initial load, pinTo, followLatest, enabling group mode). NOT in
+  // paintSidebar — SSE-driven repaints must not override an explicit user collapse.
+  function autoExpandFor(path) {
+    if (!groupByProject || !path) return;
+    const s = sessionsList.find(s => s.path === path);
+    if (!s) return;
+    if (expandedProjects.has(s.project)) return;
+    expandedProjects.add(s.project);
+    saveExpanded();
   }
 
   function setStatus(s, cls) {
@@ -1537,7 +1536,9 @@
   }
 
   function applyReset(payload) {
+    const wasFirst = !activeFile;
     activeFile = payload.file || null;
+    if (wasFirst && activeFile) autoExpandFor(activeFile);
     fileEl.textContent = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
     messagesEl.innerHTML = "";
     for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
@@ -1608,7 +1609,6 @@
   }
 
   function paintSidebar() {
-    if (groupByProject) ensureActiveExpanded();
     sessionsEl.innerHTML = "";
     latestBtn.classList.toggle("active", mode === "latest");
     groupBtn.classList.toggle("active", groupByProject);
@@ -1693,11 +1693,13 @@
 
   function pinTo(path) {
     mode = "pinned"; pinnedFile = path;
+    autoExpandFor(path);
     if (source) source.setPinned(path);
     paintSidebar();
   }
   function followLatest() {
     mode = "latest"; pinnedFile = null;
+    autoExpandFor(sessionsList[0]?.path);
     if (source) source.setLatestMode();
     paintSidebar();
   }
@@ -1709,6 +1711,7 @@
   groupBtn.addEventListener("click", () => {
     groupByProject = !groupByProject;
     localStorage.setItem(GROUP_KEY, groupByProject ? "true" : "false");
+    if (groupByProject) autoExpandFor(activeFile);
     paintSidebar();
   });
 
