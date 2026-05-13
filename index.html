@@ -417,6 +417,7 @@
     background: var(--panel);
     direction: rtl;
   }
+  .header-actions { display: flex; gap: 6px; }
   .sidebar-title {
     font-size: 12px;
     font-weight: 600;
@@ -445,12 +446,81 @@
     flex: 1;
     direction: rtl;
   }
+  .project-group { border-bottom: 1px solid var(--border); }
+  .project-header {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 0;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    font-family: inherit;
+    direction: rtl;
+    text-align: start;
+    font-size: 12px;
+  }
+  .project-header:hover { background: var(--hover); }
+  .project-header.has-active { background: var(--active); }
+  .project-header.is-open {
+    background: #eef4ec;
+    border-bottom: 1px solid var(--border);
+  }
+  .project-header.is-open.has-active { background: #e1ecdf; }
+  .project-toggle {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1;
+    width: 14px;
+    text-align: center;
+    flex-shrink: 0;
+  }
+  .project-header.is-open .project-toggle { color: var(--accent); }
+  .project-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+    direction: ltr;
+    text-align: start;
+  }
+  .proj-prefix { color: var(--muted); font-weight: 400; }
+  .proj-leaf { color: var(--text); font-weight: 600; }
+  .project-count {
+    color: var(--muted);
+    font-size: 10px;
+    font-family: ui-monospace, monospace;
+    flex-shrink: 0;
+  }
+  .project-time {
+    color: var(--muted);
+    font-size: 10px;
+    font-family: ui-monospace, monospace;
+    flex-shrink: 0;
+    direction: ltr;
+    unicode-bidi: plaintext;
+  }
+  .project-sessions {
+    background: var(--panel-2);
+    border-inline-start: 2px solid var(--accent);
+  }
+  .project-sessions[hidden] { display: none; }
+  .hit-project mark, .project-name mark, .session-project mark {
+    background: #ffe89e;
+    color: inherit;
+    padding: 0 2px;
+    border-radius: 2px;
+  }
   .session {
-    padding: 10px 14px;
+    padding: 10px 14px 10px 22px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
     direction: rtl;
   }
+  .project-sessions .session:last-child { border-bottom: 0; }
   .session:hover { background: var(--hover); }
   .session.active { background: var(--active); }
   .session.live::after {
@@ -820,7 +890,10 @@
   <aside class="sidebar">
     <div class="sidebar-header">
       <span class="sidebar-title">שיחות</span>
-      <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
+      <div class="header-actions">
+        <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
+        <button id="latest-btn" class="latest-btn active" type="button">חדשה ביותר</button>
+      </div>
     </div>
     <div class="source-bar">
       <span id="source-summary" class="source-summary"></span>
@@ -968,6 +1041,30 @@
       .replace(/^-?home-[^-]+-?/, "~/")       // Linux:   -home-<name>-...  or home-<name>-...
       .replace(/-+/g, "/")
       .replace(/\/$/, "") || "~";
+  }
+  function projectLabelParts(proj) {
+    const full = projectLabel(proj);
+    const idx = full.lastIndexOf("/");
+    if (idx === -1) return { prefix: "", leaf: full };
+    return { prefix: full.slice(0, idx + 1), leaf: full.slice(idx + 1) };
+  }
+  // Renders a project label into `container` as <span.proj-prefix>?<span.proj-leaf>.
+  // When `q` is provided, search terms are highlighted via <mark> in each part.
+  function renderProjectLabel(container, proj, q) {
+    const { prefix, leaf } = projectLabelParts(proj);
+    container.textContent = "";
+    if (prefix) {
+      const p = document.createElement("span");
+      p.className = "proj-prefix";
+      if (q) p.innerHTML = highlightMatches(prefix, q);
+      else p.textContent = prefix;
+      container.appendChild(p);
+    }
+    const n = document.createElement("span");
+    n.className = "proj-leaf";
+    if (q) n.innerHTML = highlightMatches(leaf, q);
+    else n.textContent = leaf;
+    container.appendChild(n);
   }
 
   // ---------- per-tool renderers ----------
@@ -1377,6 +1474,30 @@
   let pendingScrollUuid = null;
   let source = null;            // current Source instance
 
+  const EXPANDED_KEY = "rtl-viewer:expanded-projects";
+  const GROUP_KEY = "rtl-viewer:group-by-project";
+  let expandedProjects = new Set();
+  try {
+    const raw = localStorage.getItem(EXPANDED_KEY);
+    if (raw) expandedProjects = new Set(JSON.parse(raw));
+  } catch {}
+  let groupByProject = localStorage.getItem(GROUP_KEY) !== "false";
+  function saveExpanded() {
+    try { localStorage.setItem(EXPANDED_KEY, JSON.stringify([...expandedProjects])); } catch {}
+  }
+  // Auto-expand the project of the active session ONCE per activeFile change.
+  // After that, the user's explicit collapse is respected on subsequent repaints.
+  let lastAutoExpandedFor = null;
+  function ensureActiveExpanded() {
+    if (!activeFile || activeFile === lastAutoExpandedFor) return;
+    const s = sessionsList.find(s => s.path === activeFile);
+    if (s && !expandedProjects.has(s.project)) {
+      expandedProjects.add(s.project);
+      saveExpanded();
+    }
+    lastAutoExpandedFor = activeFile;
+  }
+
   function setStatus(s, cls) {
     statusEl.textContent = s;
     statusEl.classList.remove("live", "dead");
@@ -1414,32 +1535,108 @@
     if (stick) requestAnimationFrame(scrollMainToBottom);
   }
 
-  function paintSidebar() {
-    sessionsEl.innerHTML = "";
-    for (const s of sessionsList) {
-      const item = document.createElement("div");
-      item.className = "session";
-      item.dataset.path = s.path;
-      if (s.path === activeFile) item.classList.add("active");
-      if (mode === "latest" && s === sessionsList[0]) item.classList.add("live");
-      const preview = document.createElement("div");
-      preview.className = "session-preview";
-      preview.dir = "auto";
-      preview.textContent = s.preview || "(שיחה ריקה)";
-      const meta = document.createElement("div");
-      meta.className = "session-meta";
+  function renderSessionItem(s, latestSession, withProject) {
+    const item = document.createElement("div");
+    item.className = "session";
+    item.dataset.path = s.path;
+    if (s.path === activeFile) item.classList.add("active");
+    if (mode === "latest" && s === latestSession) item.classList.add("live");
+    const preview = document.createElement("div");
+    preview.className = "session-preview";
+    preview.dir = "auto";
+    preview.textContent = s.preview || "(שיחה ריקה)";
+    const meta = document.createElement("div");
+    meta.className = "session-meta";
+    if (withProject) {
       const proj = document.createElement("span");
       proj.className = "session-project";
-      proj.textContent = projectLabel(s.project);
-      const time = document.createElement("span");
-      time.className = "session-time";
-      time.textContent = relTime(s.mtime);
-      meta.append(proj, time);
-      item.append(preview, meta);
-      item.addEventListener("click", () => pinTo(s.path));
-      sessionsEl.appendChild(item);
+      renderProjectLabel(proj, s.project);
+      proj.title = projectLabel(s.project);
+      meta.appendChild(proj);
     }
+    const t = document.createElement("span");
+    t.className = "session-time";
+    t.dataset.mtime = String(s.mtime);
+    t.textContent = relTime(s.mtime);
+    meta.appendChild(t);
+    item.append(preview, meta);
+    item.addEventListener("click", () => pinTo(s.path));
+    return item;
+  }
+
+  function paintSidebar() {
+    if (groupByProject) ensureActiveExpanded();
+    sessionsEl.innerHTML = "";
     latestBtn.classList.toggle("active", mode === "latest");
+    groupBtn.classList.toggle("active", groupByProject);
+    groupBtn.setAttribute("aria-pressed", String(groupByProject));
+    if (!sessionsList.length) return;
+
+    const latestSession = sessionsList[0];
+
+    if (!groupByProject) {
+      for (const s of sessionsList) {
+        sessionsEl.appendChild(renderSessionItem(s, latestSession, true));
+      }
+      return;
+    }
+
+    const groups = new Map(); // project -> { sessions: [], maxMtime: number }
+    for (const s of sessionsList) {
+      let g = groups.get(s.project);
+      if (!g) { g = { sessions: [], maxMtime: 0 }; groups.set(s.project, g); }
+      g.sessions.push(s);
+      if (s.mtime > g.maxMtime) g.maxMtime = s.mtime;
+    }
+    const ordered = [...groups.entries()].sort((a, b) => b[1].maxMtime - a[1].maxMtime);
+
+    for (const [project, g] of ordered) {
+      const wrap = document.createElement("div");
+      wrap.className = "project-group";
+
+      const header = document.createElement("button");
+      header.type = "button";
+      header.className = "project-header";
+      const hasActive = activeFile && g.sessions.some(s => s.path === activeFile);
+      if (hasActive) header.classList.add("has-active");
+      const isOpen = expandedProjects.has(project);
+      if (isOpen) header.classList.add("is-open");
+
+      const toggle = document.createElement("span");
+      toggle.className = "project-toggle";
+      toggle.textContent = isOpen ? "▼" : "▶";
+
+      const name = document.createElement("span");
+      name.className = "project-name";
+      renderProjectLabel(name, project);
+      name.title = projectLabel(project);
+
+      const count = document.createElement("span");
+      count.className = "project-count";
+      count.textContent = `(${g.sessions.length})`;
+
+      const time = document.createElement("span");
+      time.className = "project-time";
+      time.dataset.mtime = String(g.maxMtime);
+      time.textContent = relTime(g.maxMtime);
+
+      header.append(toggle, name, count, time);
+      header.addEventListener("click", () => {
+        if (expandedProjects.has(project)) expandedProjects.delete(project);
+        else expandedProjects.add(project);
+        saveExpanded();
+        paintSidebar();
+      });
+      wrap.appendChild(header);
+
+      const list = document.createElement("div");
+      list.className = "project-sessions";
+      if (!isOpen) list.hidden = true;
+      g.sessions.sort((a, b) => b.mtime - a.mtime);
+      for (const s of g.sessions) list.appendChild(renderSessionItem(s, latestSession, false));
+      wrap.appendChild(list);
+      sessionsEl.appendChild(wrap);
+    }
   }
 
   const handlers = {
@@ -1460,6 +1657,15 @@
     paintSidebar();
   }
   latestBtn.addEventListener("click", followLatest);
+
+  const groupBtn = document.getElementById("group-btn");
+  groupBtn.classList.toggle("active", groupByProject);
+  groupBtn.setAttribute("aria-pressed", String(groupByProject));
+  groupBtn.addEventListener("click", () => {
+    groupByProject = !groupByProject;
+    localStorage.setItem(GROUP_KEY, groupByProject ? "true" : "false");
+    paintSidebar();
+  });
 
   // ---------- ServerSource (SSE + /api) ----------
   class ServerSource {
@@ -1540,6 +1746,7 @@
       if (!terms.length) return [];
       const hits = [];
       for (const s of this.sessions) {
+        const projText = (projectLabel(s.project) + " " + s.project).toLowerCase();
         let messages;
         try { messages = await this._getMessages(s.path); } catch { continue; }
         for (const m of messages) {
@@ -1549,17 +1756,26 @@
           let ok = true;
           for (const term of terms) {
             let idx = lower.indexOf(term);
-            if (idx === -1) { ok = false; break; }
-            if (firstIdx === -1 || idx < firstIdx) firstIdx = idx;
-            while (idx !== -1) { totalCount++; idx = lower.indexOf(term, idx + term.length); }
+            const inProj = projText.indexOf(term) !== -1;
+            if (idx === -1 && !inProj) { ok = false; break; }
+            if (idx !== -1) {
+              if (firstIdx === -1 || idx < firstIdx) firstIdx = idx;
+              while (idx !== -1) { totalCount++; idx = lower.indexOf(term, idx + term.length); }
+            }
           }
           if (!ok) continue;
-          const start = Math.max(0, firstIdx - 80);
-          const end = Math.min(m.text.length, firstIdx + 220);
-          const snippet =
-            (start > 0 ? "…" : "") +
-            m.text.slice(start, end).replace(/\s+/g, " ") +
-            (end < m.text.length ? "…" : "");
+          let snippet;
+          if (firstIdx === -1) {
+            const head = m.text.slice(0, 220).replace(/\s+/g, " ");
+            snippet = head + (m.text.length > 220 ? "…" : "");
+          } else {
+            const start = Math.max(0, firstIdx - 80);
+            const end = Math.min(m.text.length, firstIdx + 220);
+            snippet =
+              (start > 0 ? "…" : "") +
+              m.text.slice(start, end).replace(/\s+/g, " ") +
+              (end < m.text.length ? "…" : "");
+          }
           hits.push({
             path: s.path, project: s.project, uuid: m.uuid,
             role: m.role, timestamp: m.timestamp, snippet, score: totalCount,
@@ -1976,7 +2192,8 @@
       role.textContent = hit.role;
       const proj = document.createElement("span");
       proj.className = "hit-project";
-      proj.textContent = projectLabel(hit.project);
+      renderProjectLabel(proj, hit.project, q);
+      proj.title = projectLabel(hit.project);
       const time = document.createElement("span");
       time.className = "hit-time";
       time.textContent = hit.timestamp ? relTime(new Date(hit.timestamp).getTime()) : "";
@@ -2044,9 +2261,9 @@
 
   // Refresh relative times every 30s without a full repaint
   setInterval(() => {
-    document.querySelectorAll(".session-time").forEach((el, i) => {
-      const s = sessionsList[i];
-      if (s) el.textContent = relTime(s.mtime);
+    document.querySelectorAll(".session-time, .project-time").forEach(el => {
+      const m = Number(el.dataset.mtime);
+      if (m) el.textContent = relTime(m);
     });
   }, 30000);
 </script>

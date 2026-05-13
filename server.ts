@@ -115,11 +115,21 @@ interface SearchHit {
   score: number;
 }
 
+function projectLabel(proj: string): string {
+  return proj
+    .replace(/^[A-Z]--Users-[^-]+-?/, "~/")
+    .replace(/^-?Users-[^-]+-?/, "~/")
+    .replace(/^-?home-[^-]+-?/, "~/")
+    .replace(/-+/g, "/")
+    .replace(/\/$/, "") || "~";
+}
+
 async function search(q: string, limit: number): Promise<SearchHit[]> {
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
   const hits: SearchHit[] = [];
   for (const s of snapshot) {
+    const projText = (projectLabel(s.project) + " " + s.project).toLowerCase();
     let messages: Msg[];
     try { messages = await getMessages(s.path, s.mtime); }
     catch { continue; }
@@ -130,17 +140,26 @@ async function search(q: string, limit: number): Promise<SearchHit[]> {
       let ok = true;
       for (const term of terms) {
         let idx = lower.indexOf(term);
-        if (idx === -1) { ok = false; break; }
-        if (firstIdx === -1 || idx < firstIdx) firstIdx = idx;
-        while (idx !== -1) { totalCount++; idx = lower.indexOf(term, idx + term.length); }
+        const inProj = projText.indexOf(term) !== -1;
+        if (idx === -1 && !inProj) { ok = false; break; }
+        if (idx !== -1) {
+          if (firstIdx === -1 || idx < firstIdx) firstIdx = idx;
+          while (idx !== -1) { totalCount++; idx = lower.indexOf(term, idx + term.length); }
+        }
       }
       if (!ok) continue;
-      const start = Math.max(0, firstIdx - 80);
-      const end = Math.min(m.text.length, firstIdx + 220);
-      const snippet =
-        (start > 0 ? "…" : "") +
-        m.text.slice(start, end).replace(/\s+/g, " ") +
-        (end < m.text.length ? "…" : "");
+      let snippet: string;
+      if (firstIdx === -1) {
+        const head = m.text.slice(0, 220).replace(/\s+/g, " ");
+        snippet = head + (m.text.length > 220 ? "…" : "");
+      } else {
+        const start = Math.max(0, firstIdx - 80);
+        const end = Math.min(m.text.length, firstIdx + 220);
+        snippet =
+          (start > 0 ? "…" : "") +
+          m.text.slice(start, end).replace(/\s+/g, " ") +
+          (end < m.text.length ? "…" : "");
+      }
       hits.push({
         path: s.path,
         project: s.project,
