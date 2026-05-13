@@ -920,7 +920,7 @@
       <div class="header-actions">
         <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
         <button id="collapse-all-btn" class="ghost-btn" type="button" title="כווץ את כל הקבוצות" hidden>כווץ הכל</button>
-        <button id="latest-btn" class="latest-btn active" type="button" title="מעבר לשיחה שמתעדכנת">חדשה ביותר</button>
+        <button id="latest-btn" class="latest-btn" type="button" title="חזרה למעקב אחרי השיחה החדשה ביותר" hidden>חזור לחדשה ביותר</button>
       </div>
     </div>
     <div class="source-bar">
@@ -1610,7 +1610,7 @@
 
   function paintSidebar() {
     sessionsEl.innerHTML = "";
-    latestBtn.classList.toggle("active", mode === "latest");
+    latestBtn.hidden = mode === "latest";
     groupBtn.classList.toggle("active", groupByProject);
     groupBtn.setAttribute("aria-pressed", String(groupByProject));
     collapseAllBtn.hidden = true;
