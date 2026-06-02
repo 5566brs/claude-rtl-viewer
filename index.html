@@ -150,20 +150,35 @@
     max-width: 60%;
   }
 
-  #status {
+  .top-chrome {
     position: fixed;
     top: 10px;
-    inset-inline-start: 12px;
+    right: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 11;
+    direction: ltr;
+  }
+  #status {
     font-size: 10px;
     padding: 3px 9px;
     border-radius: 999px;
     background: var(--status-pending-bg);
     color: var(--status-pending-fg);
     font-family: var(--font-mono);
-    z-index: 10;
   }
   #status.live { background: var(--status-live-bg); color: var(--status-live-fg); }
   #status.dead { background: var(--status-dead-bg); color: var(--status-dead-fg); }
+  .top-chrome .theme-btn {
+    background: var(--panel);
+    border-color: var(--border-strong);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  }
+  .top-chrome .theme-btn:hover {
+    background: var(--hover);
+  }
 
   .msg {
     margin: 0 0 16px;
@@ -1009,6 +1024,7 @@
   /* Print: strip all controls and chrome, keep only the conversation. */
   @media print {
     #status,
+    .top-chrome,
     .sidebar,
     .sidebar-spacer,
     #page-credit,
@@ -1045,7 +1061,10 @@
 </style>
 </head>
 <body dir="auto">
-<div id="status">connecting…</div>
+<div class="top-chrome">
+  <div id="status">connecting…</div>
+  <button id="theme-btn" class="ghost-btn theme-btn" type="button" title="החלפת מצב תצוגה"></button>
+</div>
 <div id="setup" class="setup" hidden>
   <h1 class="setup-title">Claude RTL Viewer</h1>
   <p class="setup-intro">
@@ -1122,7 +1141,6 @@
     <div class="sidebar-header">
       <span class="sidebar-title">שיחות</span>
       <div class="header-actions">
-        <button id="theme-btn" class="ghost-btn theme-btn" type="button" title="החלפת מצב תצוגה"></button>
         <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
         <button id="collapse-all-btn" class="ghost-btn" type="button" title="כווץ את כל הקבוצות" hidden>כווץ הכל</button>
         <button id="latest-btn" class="latest-btn" type="button" title="חזרה למעקב אחרי השיחה החדשה ביותר" hidden>חזור לחדשה ביותר</button>
