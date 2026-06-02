@@ -959,7 +959,7 @@
   <h1 class="setup-title">Claude RTL Viewer</h1>
   <p class="setup-intro">
     כלי לצפייה בתמלילי שיחות של Claude Code (קבצי <code>.jsonl</code>),
-    עם תמיכה ב-RTL ו-LTR מעורבים. בחר באיזה אופן תתבצע גישה לקבצים:
+    עם תמיכה ב-RTL ו-LTR מעורבים. בחר איך לקרוא את התמלילים:
   </p>
   <div id="setup-error" class="setup-error" hidden></div>
 
@@ -967,11 +967,12 @@
     <div class="setup-option">
       <h2>תיקייה ישירות בדפדפן</h2>
       <p>
-        ללא שרת — גישה לקבצים דרך File System Access API. עובד רק בדפדפנים
-        מבוססי Chromium (Chrome / Edge), ונדרש לאשר גישה. בחר את התיקייה
-        <code>projects</code> שבתוך <code>~/.claude</code> (בדרך כלל
-        <code>C:\Users\&lt;user&gt;\.claude\projects</code> ב-Windows או
-        <code>~/.claude/projects</code> ב-macOS/Linux).
+        לחץ "בחר תיקייה", נווט אל <code>.claude/projects</code> בתיקיית הבית
+        שלך, ואשר את הגישה. הכל קורה בדפדפן — שום קובץ לא נשלח החוצה. נדרש
+        Chrome או Edge.
+        <br /><br />
+        הנתיב הוא בדרך כלל <code>C:\Users\&lt;user&gt;\.claude\projects</code>
+        ב-Windows, או <code>~/.claude/projects</code> ב-macOS / Linux.
       </p>
       <div class="setup-row">
         <button id="setup-folder-btn" type="button" class="setup-btn primary">בחר תיקייה</button>
@@ -982,10 +983,10 @@
     <div class="setup-option">
       <h2>שרת מקומי (SSE)</h2>
       <p>
-        מצריך הפעלה של ה-Bun server בתיקיית הפרויקט באמצעות <code>bun run start</code>.
-        השרת קורא את הקבצים מהנתיב השמור ב-<code>server.ts</code>
-        (קבוע <code>PROJECTS_DIR</code> — בדרך כלל
-        <code>~/.claude/projects</code>) ומשדר עדכונים חיים. הדף הנוכחי יכול לרוץ מכל מקום — דומיין מרוחק או מקומי — ולהתחבר אליו.
+        הרץ <code>bun run start</code> בתיקיית הפרויקט במחשב שלך, ואז הזן כאן
+        את כתובת השרת (ברירת מחדל <code>http://localhost:5577</code>). השרת
+        קורא את <code>~/.claude/projects</code> ומשדר עדכונים בזמן אמת. עובד
+        בכל דפדפן.
       </p>
       <div class="setup-row">
         <label class="setup-label">כתובת</label>
