@@ -9,11 +9,10 @@
 ## מה זה הדבר הזה?
 
 - **מעקב חי** אחרי שיחות צ'ט עם קלוד קוד. שיחות מתעדכנות ככל ש-Claude כותב
-  לדיסק; השיחה החדשה ביותר נעקבת אוטומטית, וניתן גם להצמיד שיחה ספציפית.
-- **תצוגה מפורטת של קריאות לכלים.** כל קריאה לכלי מופיעה כפס דק בין הודעות —
-  לחיצה פותחת אותה. קיים עיצוב ייעודי עבור:
-  - `Edit` — **diff בסגנון git, צד-מול-צד** (ישן | חדש), עם רקע מקווקו לתאים
-    ריקים. מתקפל לעמודה אחת מתחת ל-700px.
+  לדיסק; השיחה החדשה ביותר במעקב אוטומטי, וניתן גם להצמיד שיחה ספציפית.
+- **תצוגה מפורטת של קריאות לכלים.** כל קריאה לכלי מופיעה בתקציר בין הודעות —
+  לחיצה פותחת פירוט מלא. תצוגה מפורטת מותאמת עבור:
+  - `Edit` — **diff git, צד-מול-צד** (ישן | חדש).
   - `Write` — נתיב הקובץ + תצוגת תוכן.
   - `Read` — נתיב + טווח שורות / טווח עמודים.
   - `Bash` — פקודה + תיאור + דגלים (timeout, background).
@@ -36,15 +35,15 @@
   דפדפן-בלבד בעזרת File System Access API + `FileSystemObserver` (דפדפנים
   מבוססי Chromium — Chrome / Edge).
 
-## דרישות
-
-- [Bun](https://bun.sh/) 1.0 ומעלה.
-
 ## הפעלה
 
 הדרך הקלה (מומלץ): השתמש בגרסה המתארחת בכתובת
 <https://claude-rtl-viewer.pages.dev>. זהו דף סטטי שרץ כולו בדפדפן (מצב File
 System Access API) ואינו דורש התקנה.
+
+## דרישות לריצה עצמאית
+
+- [Bun](https://bun.sh/) 1.0 ומעלה.
 
 ### הרצה עצמאית
 
@@ -114,15 +113,15 @@ from `~/.claude/projects` and tails it live.
   SSE, or a browser-only mode using the File System Access API +
   `FileSystemObserver` (Chromium-based browsers — Chrome / Edge).
 
-## Requirements
-
-- [Bun](https://bun.sh/) 1.0 or later.
-
 ## Run
 
 The easy way (recommended): use the hosted version at
 <https://claude-rtl-viewer.pages.dev>. It's a static page that runs entirely in
 the browser (File System Access API mode) and requires no installation.
+
+## Requirements for local running
+
+- [Bun](https://bun.sh/) 1.0 or later.
 
 ### Run it yourself
 
