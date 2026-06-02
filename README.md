@@ -6,10 +6,10 @@
 טקסט עברי ואנגלי באותה הודעה כל אחד נשמר בכיוונו. קורא מ-`~/.claude/projects`
 ומשדר את העדכונים בזמן אמת.
 
-## מה הוא עושה
+## מה זה הדבר הזה?
 
-- **מעקב חי** אחר `~/.claude/projects`. שיחות מתעדכנות ככל ש-Claude כותב לדיסק;
-  השיחה החדשה ביותר נעקבת אוטומטית, וניתן גם להצמיד שיחה ספציפית.
+- **מעקב חי** אחרי שיחות צ'ט עם קלוד קוד. שיחות מתעדכנות ככל ש-Claude כותב
+  לדיסק; השיחה החדשה ביותר נעקבת אוטומטית, וניתן גם להצמיד שיחה ספציפית.
 - **תצוגה מפורטת של קריאות לכלים.** כל קריאה לכלי מופיעה כפס דק בין הודעות —
   לחיצה פותחת אותה. קיים עיצוב ייעודי עבור:
   - `Edit` — **diff בסגנון git, צד-מול-צד** (ישן | חדש), עם רקע מקווקו לתאים
@@ -42,7 +42,15 @@
 
 ## הפעלה
 
+הדרך הקלה (מומלץ): השתמש בגרסה המתארחת בכתובת
+<https://claude-rtl-viewer.pages.dev>. זהו דף סטטי שרץ כולו בדפדפן (מצב File
+System Access API) ואינו דורש התקנה.
+
+### הרצה עצמאית
+
 ```bash
+git clone https://github.com/5566brs/claude-rtl-viewer.git
+cd claude-rtl-viewer
 bun run start    # מאזין על $PORT, ברירת מחדל 5577
 bun run dev      # אותו דבר עם hot reload דרך `bun --watch`
 ```
@@ -53,6 +61,12 @@ bun run dev      # אותו דבר עם hot reload דרך `bun --watch`
 משתמש מערכת ההפעלה הנוכחי). ניתן לעקוף עם משתנה הסביבה `CLAUDE_PROJECTS_DIR` אם
 שלך נמצאת במקום אחר — זה כלי מקומי חד-משתמשי, ובכוונה ללא שכבת קונפיגורציה
 עמוקה יותר.
+
+## פרטיות
+
+הפרויקט פועל מקומית בלבד — אין שליחת מידע מהתמלילים לשום שרת חיצוני, אין מעקב
+(analytics), ואין פרסומות. גם הגרסה המתארחת היא דף סטטי שמשתמש ב-File System
+Access API בדפדפן, כך שהקבצים נשארים אצלך במחשב.
 
 ## רישיון
 
@@ -106,7 +120,15 @@ from `~/.claude/projects` and tails it live.
 
 ## Run
 
+The easy way (recommended): use the hosted version at
+<https://claude-rtl-viewer.pages.dev>. It's a static page that runs entirely in
+the browser (File System Access API mode) and requires no installation.
+
+### Run it yourself
+
 ```bash
+git clone https://github.com/5566brs/claude-rtl-viewer.git
+cd claude-rtl-viewer
 bun run start    # serves on $PORT, defaulting to 5577
 bun run dev      # same, with hot reload via `bun --watch`
 ```
@@ -117,6 +139,12 @@ The transcripts directory defaults to `~/.claude/projects` (resolved from the
 current OS user's home). Override with the `CLAUDE_PROJECTS_DIR` env var if
 yours lives elsewhere — this is a single-user local tool, deliberately without
 a deeper config layer.
+
+## Privacy
+
+The project runs locally only — no transcript data is sent to any external
+server, no analytics, no ads. The hosted version is also a static page that
+uses the browser's File System Access API, so your files stay on your machine.
 
 ## License
 
