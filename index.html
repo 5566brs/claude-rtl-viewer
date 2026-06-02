@@ -909,6 +909,43 @@
     height: 14px;
   }
   .msg.export-off { opacity: 0.35; }
+
+  /* Print: strip all controls and chrome, keep only the conversation. */
+  @media print {
+    #status,
+    .sidebar,
+    .sidebar-spacer,
+    #page-credit,
+    #setup,
+    #export-bar,
+    .export-actions,
+    .export-checkbox,
+    .tool-raw-btn,
+    .tool-raw { display: none !important; }
+
+    body { background: #fff; color: #000; }
+    .layout {
+      display: block;
+      max-width: none;
+      margin: 0;
+      padding: 0;
+    }
+    .main { min-width: 0; width: 100%; }
+    .main-header { margin-bottom: 10px; }
+    #file { max-width: none; }
+
+    /* Undo export-mode left padding (checkbox is hidden). */
+    #messages.export-mode .msg.user,
+    #messages.export-mode .msg.assistant { padding-left: 22px; }
+    #messages.export-mode .msg.tool { padding-left: 12px; }
+    .msg.export-off { opacity: 1; }
+
+    /* Keep each message on one page where possible. */
+    .msg { break-inside: avoid; page-break-inside: avoid; }
+
+    /* No scrollbars on a paper page — let tool blocks reflow. */
+    .tool-code, .tool-diff, .tool-entry-input { max-height: none; overflow: visible; }
+  }
 </style>
 </head>
 <body dir="auto">
