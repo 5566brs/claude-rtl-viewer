@@ -9,7 +9,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <script>
-  // Resolve theme before first paint so dark mode doesn't flash light.
+  // Resolve theme + language before first paint so dark mode doesn't flash
+  // light, and so HE/RTL doesn't briefly render in LTR before the JS runs.
   (function () {
     try {
       var stored = localStorage.getItem("rtl-viewer:theme");
@@ -18,6 +19,10 @@
         ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
         : mode;
       document.documentElement.setAttribute("data-theme", resolved);
+      var lang = localStorage.getItem("rtl-viewer:lang");
+      if (lang !== "he" && lang !== "en") lang = "he";
+      document.documentElement.setAttribute("lang", lang);
+      document.documentElement.setAttribute("dir", lang === "en" ? "ltr" : "rtl");
     } catch (e) { /* localStorage may be blocked */ }
   })();
 </script>
@@ -54,6 +59,9 @@
     --error-bg: #fee2e2;
     --error-fg: #991b1b;
     --focus-ring: #a5b4fc;
+    --tooltip-bg: #312e81;
+    --tooltip-fg: #eef2ff;
+    --tooltip-shadow: rgba(49, 46, 129, 0.28);
     --font-ui: "Geist", "Heebo", -apple-system, "Segoe UI", system-ui, sans-serif;
     --font-mono: "Geist Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
   }
@@ -88,6 +96,9 @@
     --error-bg: rgba(239, 68, 68, 0.15);
     --error-fg: #fca5a5;
     --focus-ring: #6366f1;
+    --tooltip-bg: #f4f4f5;
+    --tooltip-fg: #18181b;
+    --tooltip-shadow: rgba(0, 0, 0, 0.55);
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -108,14 +119,24 @@
     margin: 0 auto;
     padding: 18px 20px 60px;
     display: grid;
-    grid-template-columns: 1fr 320px;
+    /* sidebar (320px) goes in col 1 = start of reading direction.
+       In HE/RTL: start = right → sidebar on the right.
+       In EN/LTR: start = left → sidebar on the left.
+       Explicit grid-column on .main / .sidebar-spacer below keeps the DOM order
+       (main, spacer, sidebar) regardless of which column each lands in. */
+    grid-template-columns: 320px 1fr;
     gap: 20px;
     align-items: start;
   }
+  .sidebar-spacer { grid-column: 1; }
+  .main { grid-column: 2; }
   @media (max-width: 880px) {
     .layout { grid-template-columns: 1fr; padding: 12px; }
-    .sidebar { position: static !important; max-height: 280px !important; height: auto !important; inset: auto !important; width: auto !important; }
+    /* Reset the explicit grid-column we set above so .main flows into the
+       single-column track instead of being pinned to a non-existent col 2. */
+    .main { grid-column: auto; }
     .sidebar-spacer { display: none !important; }
+    .sidebar { position: static !important; max-height: 280px !important; height: auto !important; inset: auto !important; width: auto !important; }
   }
 
   /* Main */
@@ -124,6 +145,10 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
+    /* Title always sits at the inline-start of the main panel so it stays
+       flush-left in HE (where main is on the left of the screen). In EN the
+       main panel is on the right of the screen so the title naturally lands
+       in the middle — that's the mirror behavior the user asked for. */
     direction: ltr;
     position: sticky;
     top: 0;
@@ -132,53 +157,86 @@
     padding: 10px 0 8px;
     margin-bottom: 6px;
   }
-  .main-header h1 {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--muted);
-    margin: 0;
-    letter-spacing: 0.3px;
+  .session-headline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1;
   }
-  #file {
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--muted);
-    direction: ltr;
+  #session-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 0;
+    letter-spacing: 0.1px;
+    line-height: 1.35;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 60%;
+    min-width: 0;
+    flex: 0 1 auto;
+    unicode-bidi: plaintext;
   }
 
   .top-chrome {
     position: fixed;
     top: 10px;
-    right: 12px;
+    inset-inline-start: 12px;
     display: flex;
     align-items: center;
     gap: 8px;
     z-index: 11;
-    direction: ltr;
+    /* Chrome inherits the document's direction so its anchor and the visual
+       order of its buttons both flip when the user changes language. */
   }
+  /* Status indicator — borderless colored dot, fixed to the far inline-end
+     corner (= far left in RTL, far right in LTR) so it stays out of the way
+     of the session title. Hidden when the viewport is too narrow to leave a
+     clear gap between the dot and the layout's leftmost content. */
   #status {
-    font-size: 10px;
-    padding: 3px 9px;
-    border-radius: 999px;
-    background: var(--status-pending-bg);
-    color: var(--status-pending-fg);
-    font-family: var(--font-mono);
+    position: fixed;
+    top: 16px;
+    inset-inline-end: 14px;
+    width: 11px;
+    height: 11px;
+    border: 0;
+    background: var(--status-pending-fg);
+    border-radius: 50%;
+    padding: 0;
+    z-index: 11;
+    cursor: default;
+    transition: background-color 180ms ease;
   }
-  #status.live { background: var(--status-live-bg); color: var(--status-live-fg); }
-  #status.dead { background: var(--status-dead-bg); color: var(--status-dead-fg); }
-  .top-chrome .theme-btn {
+  #status.live { background: var(--status-live-fg); }
+  #status.dead { background: var(--status-dead-fg); }
+  #status.live {
+    animation: pulse-dot 2.2s ease-out infinite;
+    box-shadow: 0 0 0 0 var(--status-live-fg);
+  }
+  #status.pending { animation: pulse-soft 1.4s ease-in-out infinite; }
+  @keyframes pulse-dot {
+    0%   { box-shadow: 0 0 0 0    color-mix(in srgb, var(--status-live-fg) 65%, transparent); }
+    70%  { box-shadow: 0 0 0 7px  color-mix(in srgb, var(--status-live-fg) 0%,  transparent); }
+    100% { box-shadow: 0 0 0 0    color-mix(in srgb, var(--status-live-fg) 0%,  transparent); }
+  }
+  @keyframes pulse-soft {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #status { animation: none !important; box-shadow: none !important; }
+  }
+  /* If the layout doesn't leave room between the screen edge and the title,
+     hide the dot completely so it never overlaps the headline. */
+  @media (max-width: 1320px) {
+    #status { display: none; }
+  }
+  .top-chrome .icon-btn {
     background: var(--panel);
-    border-color: var(--border-strong);
-    color: var(--text);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
-  .top-chrome .theme-btn:hover {
-    background: var(--hover);
-  }
+  .top-chrome .icon-btn:hover { background: var(--hover); }
 
   .msg {
     margin: 0 0 16px;
@@ -242,16 +300,21 @@
     letter-spacing: 0.4px;
   }
   .tool-raw-btn {
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     border: 1px solid var(--border-strong);
     background: var(--panel-2);
     color: var(--muted);
-    border-radius: 4px;
-    padding: 1px 7px;
-    font-family: var(--font-mono);
-    font-size: 10px;
+    border-radius: 5px;
+    padding: 0;
     cursor: pointer;
-    line-height: 1.4;
+    flex-shrink: 0;
+    transition: color 140ms ease, background 140ms ease, border-color 140ms ease;
   }
+  .tool-raw-btn svg { width: 12px; height: 12px; display: block; }
   .tool-raw-btn:hover { color: var(--text); background: var(--hover); }
   .tool-raw-btn.active {
     background: var(--active);
@@ -497,7 +560,7 @@
     top: 18px;
     width: 320px;
     height: calc(100vh - 36px);
-    inset-inline-end: max(20px, calc((100vw - 1240px) / 2 + 20px));
+    inset-inline-start: max(20px, calc((100vw - 1240px) / 2 + 20px));
     display: flex;
     flex-direction: column;
   }
@@ -508,7 +571,6 @@
     padding: 10px 14px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
-    direction: rtl;
   }
   .header-actions { display: flex; gap: 6px; }
   .sidebar-title {
@@ -517,56 +579,122 @@
     color: var(--muted);
     letter-spacing: 0.4px;
   }
-  .latest-btn {
+  /* Unified icon button. All toolbar / chrome buttons use .icon-btn. */
+  .icon-btn {
+    --icon-size: 30px;
+    width: var(--icon-size);
+    height: var(--icon-size);
     border: 1px solid var(--border-strong);
     background: var(--panel-2);
-    color: var(--text);
-    border-radius: 8px;
-    padding: 4px 10px;
-    font-size: 11px;
-    cursor: pointer;
-    font-family: inherit;
-  }
-  .latest-btn.active {
-    background: var(--active);
-    border-color: var(--accent);
-    color: var(--accent);
-  }
-  .latest-btn:hover { background: var(--hover); }
-  .ghost-btn {
-    border: 1px solid var(--border);
-    background: transparent;
     color: var(--muted);
     border-radius: 8px;
-    padding: 3px 7px;
-    font-size: 10px;
-    cursor: pointer;
-    font-family: inherit;
-    line-height: 1.4;
-  }
-  .ghost-btn:hover {
-    background: var(--hover);
-    color: var(--text);
-    border-color: var(--border-strong);
-  }
-  .theme-btn {
+    padding: 0;
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    padding: 3px 9px;
-    min-width: 0;
+    justify-content: center;
+    cursor: pointer;
+    font-family: inherit;
+    flex-shrink: 0;
+    transition:
+      color 140ms ease,
+      background 140ms ease,
+      border-color 140ms ease,
+      box-shadow 140ms ease,
+      transform 140ms ease;
   }
-  .theme-btn .theme-icon {
-    font-size: 12px;
-    line-height: 1;
-    display: inline-block;
+  .icon-btn:hover {
+    color: var(--text);
+    background: var(--hover);
+    border-color: var(--border-strong);
+  }
+  .icon-btn:active { transform: translateY(1px); }
+  .icon-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px var(--focus-ring);
+    border-color: var(--accent);
+  }
+  .icon-btn[aria-pressed="true"],
+  .icon-btn.is-active {
+    background: var(--active);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .icon-btn[aria-pressed="true"]:hover,
+  .icon-btn.is-active:hover {
+    background: var(--active);
+    color: var(--accent);
+  }
+  .icon-btn.is-primary {
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
+  }
+  .icon-btn.is-primary:hover {
+    background: var(--accent-strong);
+    border-color: var(--accent-strong);
+    color: #ffffff;
+  }
+  .icon-btn.is-sm { --icon-size: 26px; }
+  .icon-btn.is-xs { --icon-size: 20px; border-radius: 5px; }
+  .icon-btn.is-xs svg { width: 11px; height: 11px; }
+  .icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    color: var(--muted);
+    background: var(--panel-2);
+    border-color: var(--border);
+  }
+  .icon-btn svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+  }
+  .icon-btn.is-sm svg { width: 14px; height: 14px; }
+
+  /* Custom tooltip — design-system styled, inverted from panel for contrast. */
+  .tt {
+    position: fixed;
+    z-index: 1000;
+    background: var(--tooltip-bg);
+    color: var(--tooltip-fg);
+    font-family: var(--font-ui);
+    font-size: 11.5px;
+    font-weight: 500;
+    letter-spacing: 0.15px;
+    line-height: 1.35;
+    padding: 6px 10px;
+    border-radius: 7px;
+    max-width: 260px;
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(-2px);
+    transition: opacity 140ms ease, transform 140ms ease;
+    box-shadow: 0 6px 18px var(--tooltip-shadow), 0 1px 3px var(--tooltip-shadow);
+    white-space: nowrap;
+    text-align: center;
+    unicode-bidi: plaintext;
+  }
+  .tt[data-pos="top"]    { transform: translateY(2px); }
+  .tt[data-pos="bottom"] { transform: translateY(-2px); }
+  .tt.show { opacity: 1; transform: translateY(0); }
+  .tt::after {
+    content: "";
+    position: absolute;
+    left: var(--caret-x, 50%);
+    width: 8px;
+    height: 8px;
+    background: var(--tooltip-bg);
+    transform: translateX(-50%) rotate(45deg);
+  }
+  .tt[data-pos="bottom"]::after { top: -3px; }
+  .tt[data-pos="top"]::after    { bottom: -3px; }
+  @media (prefers-reduced-motion: reduce) {
+    .tt { transition: opacity 80ms linear; transform: none !important; }
   }
 
   #sessions {
     overflow-y: auto;
     flex: 1;
-    direction: rtl;
   }
   .project-group { border-bottom: 1px solid var(--border); }
   .project-header {
@@ -664,7 +792,6 @@
     padding: 10px 14px 10px 22px;
     border-bottom: 1px solid var(--border);
     cursor: pointer;
-    direction: rtl;
   }
   .project-sessions .session:last-child { border-bottom: 0; }
   .session:hover { background: var(--hover); }
@@ -720,7 +847,6 @@
     padding: 8px 12px;
     border-bottom: 1px solid var(--border);
     background: var(--panel);
-    direction: rtl;
   }
   .sidebar-search input {
     width: 100%;
@@ -759,7 +885,6 @@
   #search-results {
     overflow-y: auto;
     flex: 1;
-    direction: rtl;
   }
   .search-status {
     padding: 18px 14px;
@@ -836,18 +961,6 @@
     text-align: start;
     flex: 1;
   }
-  .src-change-btn {
-    border: 1px solid var(--border-strong);
-    background: var(--panel-2);
-    color: var(--muted);
-    border-radius: 6px;
-    padding: 2px 10px;
-    font-size: 11px;
-    font-family: inherit;
-    cursor: pointer;
-    flex-shrink: 0;
-  }
-  .src-change-btn:hover { color: var(--text); background: var(--hover); }
 
   /* Setup / welcome screen */
   .setup {
@@ -857,7 +970,6 @@
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 14px;
-    direction: rtl;
   }
   .setup-title {
     font-size: 18px;
@@ -956,6 +1068,15 @@
     font-family: inherit;
     cursor: pointer;
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    transition: background 140ms ease, border-color 140ms ease;
+  }
+  .setup-btn svg {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
   }
   .setup-btn:hover { background: var(--hover); }
   .setup-btn.primary {
@@ -999,8 +1120,6 @@
     justify-content: flex-end;
   }
   .export-actions { display: flex; gap: 6px; flex-shrink: 0; }
-  .export-actions .ghost-btn { font-size: 11px; padding: 3px 9px; }
-  .export-actions .ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .export-bar {
     position: sticky;
     top: 48px;
@@ -1013,7 +1132,6 @@
     background: var(--panel);
     border: 1px solid var(--border-strong);
     border-radius: 10px;
-    direction: rtl;
   }
   .export-bar-spacer { flex: 1; }
   .export-count {
@@ -1021,7 +1139,6 @@
     color: var(--muted);
     font-family: var(--font-mono);
   }
-  .export-bar .latest-btn.active { cursor: pointer; }
   #messages.export-mode .msg { position: relative; }
   #messages.export-mode .msg.user,
   #messages.export-mode .msg.assistant { padding-left: 46px; }
@@ -1073,6 +1190,9 @@
       --diff-del-fg: #7f1d1d;
       --diff-empty: rgba(0, 0, 0, 0.04);
       --link: #4f46e5;
+      --tooltip-bg: #312e81;
+      --tooltip-fg: #eef2ff;
+      --tooltip-shadow: rgba(49, 46, 129, 0.28);
       color-scheme: light;
     }
 
@@ -1086,7 +1206,8 @@
     .export-actions,
     .export-checkbox,
     .tool-raw-btn,
-    .tool-raw { display: none !important; }
+    .tool-raw,
+    .tt { display: none !important; }
 
     body { background: #ffffff; color: var(--text); }
     .layout {
@@ -1113,98 +1234,81 @@
   }
 </style>
 </head>
-<body dir="auto">
+<body>
+<span id="status"></span>
 <div class="top-chrome">
-  <div id="status">connecting…</div>
-  <button id="theme-btn" class="ghost-btn theme-btn" type="button" title="החלפת מצב תצוגה"></button>
+  <button id="theme-btn" class="icon-btn" type="button"></button>
+  <button id="lang-btn" class="icon-btn" type="button"></button>
 </div>
 <div id="setup" class="setup" hidden>
   <h1 class="setup-title">Claude RTL Viewer</h1>
-  <p class="setup-intro">
-    כלי לצפייה בתמלילי שיחות של Claude Code (קבצי <code>.jsonl</code>),
-    עם תמיכה ב-RTL ו-LTR מעורבים. בחר איך לקרוא את התמלילים:
-  </p>
+  <p class="setup-intro" data-i18n-html="setup_intro_html"></p>
   <div id="setup-error" class="setup-error" hidden></div>
 
   <div class="setup-options">
     <div class="setup-option">
-      <h2>תיקייה ישירות בדפדפן</h2>
-      <p>
-        לחץ "בחר תיקייה", נווט אל <code>.claude/projects</code> בתיקיית הבית
-        שלך, ואשר את הגישה. הכל קורה בדפדפן — שום קובץ לא נשלח החוצה. נדרש
-        Chrome או Edge.
-        <br /><br />
-        הנתיב הוא בדרך כלל <code>C:\Users\&lt;user&gt;\.claude\projects</code>
-        ב-Windows, או <code>~/.claude/projects</code> ב-macOS / Linux.
-      </p>
+      <h2 data-i18n="setup_folder_h2"></h2>
+      <p data-i18n-html="setup_folder_p_html"></p>
       <div class="setup-row">
-        <button id="setup-folder-btn" type="button" class="setup-btn primary">בחר תיקייה</button>
+        <button id="setup-folder-btn" type="button" class="setup-btn primary" data-icon="folderOpen"><span data-i18n="setup_folder_btn"></span></button>
         <span id="setup-folder-hint" class="setup-hint"></span>
       </div>
     </div>
 
     <div class="setup-option">
-      <h2>שרת מקומי (SSE)</h2>
-      <p>
-        הרץ <code>bun run start</code> בתיקיית הפרויקט במחשב שלך, ואז הזן כאן
-        את כתובת השרת (ברירת מחדל <code>http://localhost:5577</code>). השרת
-        קורא את <code>~/.claude/projects</code> ומשדר עדכונים בזמן אמת. עובד
-        בכל דפדפן.
-      </p>
+      <h2 data-i18n="setup_server_h2"></h2>
+      <p data-i18n-html="setup_server_p_html"></p>
       <div class="setup-row">
-        <label class="setup-label">כתובת</label>
+        <label class="setup-label" data-i18n="setup_server_label"></label>
         <input id="setup-url" type="text" dir="ltr" spellcheck="false" />
-        <button id="setup-server-btn" type="button" class="setup-btn primary">חבר</button>
+        <button id="setup-server-btn" type="button" class="setup-btn primary" data-icon="plug"><span data-i18n="setup_server_btn"></span></button>
       </div>
     </div>
   </div>
 
-  <p class="setup-privacy">
-    הפרויקט סטטי, ופועל כולו בדפדפן או מול שרת לוקאלי שלך — שום מידע מהתמלילים לא נשלח לשרת חיצוני.
-    <br />
-    קוד פתוח ב-<a href="https://github.com/5566brs/claude-rtl-viewer" target="_blank" rel="noopener noreferrer">github.com/5566brs/claude-rtl-viewer</a>
-    · מאת <a href="https://github.com/5566brs" target="_blank" rel="noopener noreferrer">@5566brs</a>
-  </p>
+  <p class="setup-privacy" data-i18n-html="setup_privacy_html"></p>
 </div>
 <div class="layout">
   <main class="main">
     <div class="main-header">
-      <h1>Claude RTL viewer</h1>
+      <div class="session-headline">
+        <h1 id="session-title" hidden></h1>
+        <button id="copy-path-btn" class="icon-btn is-xs" type="button" data-icon="copy" data-i18n-tt="tt_copy_path" hidden></button>
+      </div>
       <div class="header-right">
-        <span id="file"></span>
         <div class="export-actions">
-          <button id="export-json-btn" class="ghost-btn" type="button" title="ייצא את השיחה כ-JSON" disabled>JSON</button>
-          <button id="export-html-btn" class="ghost-btn" type="button" title="ייצא את השיחה כ-HTML" disabled>HTML</button>
+          <button id="export-json-btn" class="icon-btn is-sm" type="button" data-icon="braces" data-i18n-tt="tt_export_json" disabled></button>
+          <button id="export-html-btn" class="icon-btn is-sm" type="button" data-icon="codeXml" data-i18n-tt="tt_export_html" disabled></button>
         </div>
       </div>
     </div>
     <div id="export-bar" class="export-bar" hidden>
-      <button id="export-confirm" class="latest-btn active" type="button">ייצא נבחרים</button>
-      <button id="export-select-all" class="ghost-btn" type="button" hidden>בחר הכל</button>
-      <button id="export-deselect-all" class="ghost-btn" type="button">בטל הכל</button>
+      <button id="export-confirm" class="icon-btn is-sm is-primary" type="button" data-icon="download" data-i18n-tt="tt_export_confirm"></button>
+      <button id="export-select-all" class="icon-btn is-sm" type="button" data-icon="listChecks" data-i18n-tt="tt_export_select_all" hidden></button>
+      <button id="export-deselect-all" class="icon-btn is-sm" type="button" data-icon="squareX" data-i18n-tt="tt_export_deselect_all"></button>
       <span class="export-bar-spacer"></span>
       <span id="export-count" class="export-count"></span>
-      <button id="export-cancel" class="ghost-btn" type="button">בטל</button>
+      <button id="export-cancel" class="icon-btn is-sm" type="button" data-icon="x" data-i18n-tt="tt_export_cancel"></button>
     </div>
     <div id="messages"></div>
-    <div id="empty">ממתין לשיחה…</div>
+    <div id="empty" data-i18n="empty_state"></div>
   </main>
   <div class="sidebar-spacer" aria-hidden="true"></div>
   <aside class="sidebar">
     <div class="sidebar-header">
-      <span class="sidebar-title">שיחות</span>
+      <span class="sidebar-title" data-i18n="sidebar_title"></span>
       <div class="header-actions">
-        <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
-        <button id="collapse-all-btn" class="ghost-btn" type="button" title="כווץ את כל הקבוצות" hidden>כווץ הכל</button>
-        <button id="latest-btn" class="latest-btn" type="button" title="חזרה למעקב אחרי השיחה החדשה ביותר" hidden>חזור לחדשה ביותר</button>
+        <button id="group-btn" class="icon-btn is-sm" type="button" data-icon="folderTree" aria-pressed="true"></button>
+        <button id="collapse-all-btn" class="icon-btn is-sm" type="button" data-icon="foldVertical" data-i18n-tt="tt_collapse" hidden></button>
+        <button id="latest-btn" class="icon-btn is-sm is-primary" type="button" data-icon="chevronsDown" data-i18n-tt="tt_latest" hidden></button>
       </div>
     </div>
     <div class="source-bar">
       <span id="source-summary" class="source-summary"></span>
-      <button id="change-source-btn" class="src-change-btn" type="button">החלף</button>
+      <button id="change-source-btn" class="icon-btn is-sm" type="button" data-icon="arrowRightLeft" data-i18n-tt="tt_change_source"></button>
     </div>
     <div class="sidebar-search">
-      <input id="search-input" type="search" placeholder="חיפוש בכל השיחות…" />
+      <input id="search-input" type="search" data-i18n-ph="search_ph" />
     </div>
     <div id="sessions"></div>
     <div id="search-results" hidden></div>
@@ -1218,23 +1322,298 @@
 </div>
 <script>
   // ---------- inline icons (Lucide, MIT-licensed — lucide.dev) ----------
-  // Stroke-based so they inherit color via `currentColor`. Keep sizes/strokes consistent.
+  // Stroke-based so they inherit color via `currentColor`. Sizing is set by CSS
+  // (`.icon-btn svg`, `.setup-btn svg`, `.project-toggle svg`, `.tool-raw-btn svg`),
+  // so the SVGs only ship a viewBox — never width/height — and one consistent
+  // stroke-width of 2 for uniform optical weight.
+  const SVG_OPEN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">';
+  const SVG_CLOSE = '</svg>';
+  const _ico = (body) => SVG_OPEN + body + SVG_CLOSE;
   const ICONS = {
-    sun: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
-    moon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
-    monitor: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>',
-    chevronRight: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+    // theme cycle
+    sun:     _ico('<circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/>'),
+    moon:    _ico('<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>'),
+    monitor: _ico('<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>'),
+
+    // navigation
+    chevronRight: _ico('<path d="m9 18 6-6-6-6"/>'),
+    chevronsDown: _ico('<path d="m7 6 5 5 5-5"/><path d="m7 13 5 5 5-5"/>'),
+
+    // sidebar / toolbar
+    folderTree:    _ico('<path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/>'),
+    foldVertical:  _ico('<path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/>'),
+    arrowRightLeft:_ico('<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>'),
+
+    // export
+    braces:      _ico('<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>'),
+    codeXml:     _ico('<path d="m18 16 4-4-4-4"/><path d="m6 8-4 4 4 4"/><path d="m14.5 4-5 16"/>'),
+    download:    _ico('<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>'),
+    listChecks:  _ico('<path d="M11 6h10"/><path d="M11 12h10"/><path d="M11 18h10"/><path d="m3 5 2 2 3-3"/><path d="m3 11 2 2 3-3"/><path d="m3 17 2 2 3-3"/>'),
+    squareX:     _ico('<rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>'),
+    x:           _ico('<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'),
+
+    // setup screen
+    folderOpen:  _ico('<path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2"/>'),
+    plug:        _ico('<path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/>'),
+
+    // status indicator
+    radio:       _ico('<path d="M4.9 19.1C1 15.2 1 8.8 4.9 4.9"/><path d="M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5"/><circle cx="12" cy="12" r="2"/><path d="M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5"/><path d="M19.1 4.9C23 8.8 23 15.1 19.1 19"/>'),
+    wifiOff:     _ico('<path d="m2 2 20 20"/><path d="M8.5 16.5a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65"/><path d="M10.66 5c4.01-.36 8.14.9 11.34 3.76"/><path d="M16.85 11.25a10 10 0 0 1 2.22 1.68"/><path d="M5 13a10 10 0 0 1 5.24-2.76"/><line x1="12" x2="12.01" y1="20" y2="20"/>'),
+    loader2:     _ico('<path d="M21 12a9 9 0 1 1-6.219-8.56"/>'),
+
+    // header — session meta
+    copy:        _ico('<rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>'),
+    check:       _ico('<path d="M20 6 9 17l-5-5"/>'),
+
+    // language toggle
+    languages:   _ico('<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>'),
   };
+
+  // Inflate any [data-icon="name"] elements with their SVG, runs once at start.
+  function inflateIcons(root = document) {
+    root.querySelectorAll("[data-icon]").forEach(el => {
+      const name = el.getAttribute("data-icon");
+      const svg = ICONS[name];
+      if (!svg) return;
+      // Insert at the start so any sibling <span> label stays after the icon.
+      el.insertAdjacentHTML("afterbegin", svg);
+      el.removeAttribute("data-icon");
+    });
+  }
+  document.addEventListener("DOMContentLoaded", () => inflateIcons());
+
+  // ---------- i18n (he / en) ----------
+  // Strings keyed by the role they play in the UI. Functions return strings so
+  // callers can interpolate state (status messages, counts, etc.). Anything HTML
+  // — paragraphs with <code>/<a> markup — is stored as a separate `*_html` key
+  // and applied via innerHTML; plain text uses textContent.
+  const LANG_KEY = "rtl-viewer:lang";
+  const STRINGS = {
+    he: {
+      _name: "עברית",
+      _dir: "rtl",
+      _locale: "he",
+      // setup screen
+      setup_intro_html:
+        'כלי לצפייה בתמלילי שיחות של Claude Code (קבצי <code>.jsonl</code>), ' +
+        'עם תמיכה ב-RTL ו-LTR מעורבים. בחר איך לקרוא את התמלילים:',
+      setup_folder_h2: "תיקייה ישירות בדפדפן",
+      setup_folder_p_html:
+        'לחץ "בחר תיקייה", נווט אל <code>.claude/projects</code> בתיקיית הבית ' +
+        'שלך, ואשר את הגישה. הכל קורה בדפדפן — שום קובץ לא נשלח החוצה. נדרש ' +
+        'Chrome או Edge.<br /><br />' +
+        'הנתיב הוא בדרך כלל <code>C:\\Users\\&lt;user&gt;\\.claude\\projects</code> ' +
+        'ב-Windows, או <code>~/.claude/projects</code> ב-macOS / Linux.',
+      setup_folder_btn: "בחר תיקייה",
+      setup_server_h2: "שרת מקומי (SSE)",
+      setup_server_p_html:
+        'הרץ <code>bun run start</code> בתיקיית הפרויקט במחשב שלך, ואז הזן כאן ' +
+        'את כתובת השרת (ברירת מחדל <code>http://localhost:5577</code>). השרת ' +
+        'קורא את <code>~/.claude/projects</code> ומשדר עדכונים בזמן אמת. עובד ' +
+        'בכל דפדפן.',
+      setup_server_label: "כתובת",
+      setup_server_btn: "חבר",
+      setup_privacy_html:
+        'הפרויקט סטטי, ופועל כולו בדפדפן או מול שרת לוקאלי שלך — שום מידע מהתמלילים לא נשלח לשרת חיצוני.<br />' +
+        'קוד פתוח ב-<a href="https://github.com/5566brs/claude-rtl-viewer" target="_blank" rel="noopener noreferrer">github.com/5566brs/claude-rtl-viewer</a>' +
+        ' · מאת <a href="https://github.com/5566brs" target="_blank" rel="noopener noreferrer">@5566brs</a>',
+      // sidebar / chrome
+      sidebar_title: "שיחות",
+      search_ph: "חיפוש בכל השיחות…",
+      empty_state: "ממתין לשיחה…",
+      empty_session: "(שיחה ריקה)",
+      // tooltips
+      tt_copy_path: "העתק נתיב מלא לקובץ",
+      tt_copy_done: "הועתק ✓",
+      tt_export_json: "ייצא את השיחה כ־JSON",
+      tt_export_html: "ייצא את השיחה כ־HTML",
+      tt_group_on: "קבץ שיחות לפי פרויקט",
+      tt_group_off: "בטל קיבוץ לפי פרויקט",
+      tt_collapse: "כווץ את כל הקבוצות",
+      tt_latest: "חזור למעקב אחר השיחה החדשה ביותר",
+      tt_change_source: "החלף מקור (תיקייה / שרת)",
+      tt_export_confirm: "ייצא את הנבחרים כקובץ HTML",
+      tt_export_select_all: "בחר את כל ההודעות",
+      tt_export_deselect_all: "בטל בחירה לכל ההודעות",
+      tt_export_cancel: "צא ממצב יצוא",
+      tt_tool_raw_show: "הצג JSON גולמי",
+      tt_tool_raw_hide: "הסתר JSON גולמי",
+      tt_lang: "Switch to English",
+      // theme
+      theme_light: "בהיר",
+      theme_dark: "כהה",
+      theme_auto: "אוטו",
+      theme_tt: (label) => `תצוגה: ${label} · לחץ להחלפה`,
+      theme_aria: (label) => `מצב תצוגה: ${label}. לחץ להחלפה.`,
+      // status
+      status_connecting: "מתחבר…",
+      status_live: (text) => `מחובר · ${text}`,
+      status_live_alone: "מחובר",
+      status_dead: (text) => `מנותק · ${text}`,
+      status_dead_alone: "מנותק",
+      status_reconnecting: "מתחבר מחדש…",
+      status_scanning: "סורק…",
+      status_scan_failed: "סריקה נכשלה",
+      status_no_observer: "אין צופה קבצים",
+      status_observe_failed: "צפייה בקבצים נכשלה",
+      // search
+      search_no_results: "אין תוצאות",
+      search_searching: "מחפש…",
+      search_error: "שגיאה",
+      // setup errors / hints
+      setup_folder_rehydrate: (name) => `לחץ "בחר תיקייה" כדי לחדש הרשאה ל-${name}`,
+      setup_server_unreachable: (url) =>
+        `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, ושכתובת השרת תקינה.`,
+      setup_server_pref_fail: (url) =>
+        `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, או החלף לתיקייה ישירה בדפדפן.`,
+      export_include: "כלול ביצוא",
+    },
+    en: {
+      _name: "English",
+      _dir: "ltr",
+      _locale: "en",
+      setup_intro_html:
+        'A viewer for Claude Code conversation transcripts (<code>.jsonl</code> files), ' +
+        'with mixed RTL/LTR support. Pick how you want to read transcripts:',
+      setup_folder_h2: "Folder directly in the browser",
+      setup_folder_p_html:
+        'Click "Pick folder", navigate to <code>.claude/projects</code> in your home ' +
+        'directory, and grant access. Everything happens in the browser — no file ' +
+        'is sent anywhere. Requires Chrome or Edge.<br /><br />' +
+        'The path is typically <code>C:\\Users\\&lt;user&gt;\\.claude\\projects</code> ' +
+        'on Windows, or <code>~/.claude/projects</code> on macOS / Linux.',
+      setup_folder_btn: "Pick folder",
+      setup_server_h2: "Local server (SSE)",
+      setup_server_p_html:
+        'Run <code>bun run start</code> in the project folder on your machine, then ' +
+        'enter the server URL here (default <code>http://localhost:5577</code>). The ' +
+        'server reads <code>~/.claude/projects</code> and streams live updates. Works ' +
+        'in any browser.',
+      setup_server_label: "URL",
+      setup_server_btn: "Connect",
+      setup_privacy_html:
+        'The project is static — it runs entirely in your browser or against your own local server. No transcript data leaves your machine.<br />' +
+        'Open source at <a href="https://github.com/5566brs/claude-rtl-viewer" target="_blank" rel="noopener noreferrer">github.com/5566brs/claude-rtl-viewer</a>' +
+        ' · by <a href="https://github.com/5566brs" target="_blank" rel="noopener noreferrer">@5566brs</a>',
+      sidebar_title: "Conversations",
+      search_ph: "Search all conversations…",
+      empty_state: "Waiting for a conversation…",
+      empty_session: "(empty session)",
+      tt_copy_path: "Copy full file path",
+      tt_copy_done: "Copied ✓",
+      tt_export_json: "Export conversation as JSON",
+      tt_export_html: "Export conversation as HTML",
+      tt_group_on: "Group conversations by project",
+      tt_group_off: "Stop grouping by project",
+      tt_collapse: "Collapse all groups",
+      tt_latest: "Follow the newest conversation again",
+      tt_change_source: "Switch source (folder / server)",
+      tt_export_confirm: "Export selected messages as HTML",
+      tt_export_select_all: "Select all messages",
+      tt_export_deselect_all: "Deselect all messages",
+      tt_export_cancel: "Exit export mode",
+      tt_tool_raw_show: "Show raw JSON",
+      tt_tool_raw_hide: "Hide raw JSON",
+      tt_lang: "החלף לעברית",
+      theme_light: "Light",
+      theme_dark: "Dark",
+      theme_auto: "Auto",
+      theme_tt: (label) => `Theme: ${label} · click to change`,
+      theme_aria: (label) => `Theme: ${label}. Click to change.`,
+      status_connecting: "Connecting…",
+      status_live: (text) => `Live · ${text}`,
+      status_live_alone: "Live",
+      status_dead: (text) => `Offline · ${text}`,
+      status_dead_alone: "Offline",
+      status_reconnecting: "Reconnecting…",
+      status_scanning: "Scanning…",
+      status_scan_failed: "Scan failed",
+      status_no_observer: "No file observer",
+      status_observe_failed: "File observation failed",
+      search_no_results: "No results",
+      search_searching: "Searching…",
+      search_error: "Error",
+      setup_folder_rehydrate: (name) => `Click "Pick folder" to renew permission for ${name}`,
+      setup_server_unreachable: (url) =>
+        `Couldn't reach ${url}. Make sure you ran "bun run start" in the project folder and the URL is correct.`,
+      setup_server_pref_fail: (url) =>
+        `Couldn't reach ${url}. Make sure you ran "bun run start" in the project folder, or switch to the direct folder option above.`,
+      export_include: "Include in export",
+    },
+  };
+
+  let currentLang = (() => {
+    const stored = localStorage.getItem(LANG_KEY);
+    return stored === "en" || stored === "he" ? stored : "he";
+  })();
+
+  // Listeners that need to refresh whenever the language flips (e.g. dynamic
+  // tooltips like theme/group/copy that aren't covered by [data-i18n]).
+  const langChangeListeners = new Set();
+  function onLangChange(fn) { langChangeListeners.add(fn); }
+
+  function t(key, ...args) {
+    const dict = STRINGS[currentLang] || STRINGS.he;
+    const v = dict[key];
+    if (typeof v === "function") return v(...args);
+    return v != null ? v : key;
+  }
+
+  function applyLang(lang) {
+    if (!STRINGS[lang]) return;
+    currentLang = lang;
+    localStorage.setItem(LANG_KEY, lang);
+    const dict = STRINGS[lang];
+    const html = document.documentElement;
+    html.setAttribute("lang", dict._locale);
+    html.setAttribute("dir", dict._dir);
+    document.body.setAttribute("dir", dict._dir);
+
+    // Plain text replacements.
+    document.querySelectorAll("[data-i18n]").forEach(el => {
+      el.textContent = t(el.getAttribute("data-i18n"));
+    });
+    // Markup replacements — controlled keys only, our own static content.
+    document.querySelectorAll("[data-i18n-html]").forEach(el => {
+      el.innerHTML = t(el.getAttribute("data-i18n-html"));
+    });
+    // data-tooltip targets.
+    document.querySelectorAll("[data-i18n-tt]").forEach(el => {
+      el.setAttribute("data-tooltip", t(el.getAttribute("data-i18n-tt")));
+    });
+    // Input placeholders.
+    document.querySelectorAll("[data-i18n-ph]").forEach(el => {
+      el.setAttribute("placeholder", t(el.getAttribute("data-i18n-ph")));
+    });
+
+    // Lang-btn icon/tooltip self-update.
+    const langBtn = document.getElementById("lang-btn");
+    if (langBtn) langBtn.setAttribute("data-tooltip", t("tt_lang"));
+
+    for (const fn of langChangeListeners) {
+      try { fn(lang); } catch (err) { console.error("lang listener:", err); }
+    }
+  }
+  // Apply ASAP (mirror of theme: pre-paint) so the page boots in the right dir
+  // without a visible flip.
+  applyLang(currentLang);
+  document.addEventListener("DOMContentLoaded", () => {
+    applyLang(currentLang);
+    const langBtn = document.getElementById("lang-btn");
+    if (langBtn) {
+      langBtn.innerHTML = ICONS.languages;
+      langBtn.addEventListener("click", () => {
+        applyLang(currentLang === "he" ? "en" : "he");
+      });
+    }
+  });
 
   // ---------- theme (light / dark / auto) ----------
   (function initTheme() {
     const KEY = "rtl-viewer:theme";
     const order = ["light", "dark", "auto"];
-    const labels = {
-      light: { icon: ICONS.sun, text: "בהיר" },
-      dark:  { icon: ICONS.moon, text: "כהה" },
-      auto:  { icon: ICONS.monitor, text: "אוטו" },
-    };
+    const ICON_BY_MODE = { light: ICONS.sun, dark: ICONS.moon, auto: ICONS.monitor };
+    const LABEL_KEY = { light: "theme_light", dark: "theme_dark", auto: "theme_auto" };
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
 
     function resolve(mode) {
@@ -1245,9 +1624,10 @@
       document.documentElement.setAttribute("data-theme", resolve(mode));
       const btn = document.getElementById("theme-btn");
       if (btn) {
-        const l = labels[mode];
-        btn.innerHTML = `<span class="theme-icon">${l.icon}</span><span>${l.text}</span>`;
-        btn.setAttribute("aria-label", `מצב תצוגה: ${l.text}. לחץ להחלפה.`);
+        const label = t(LABEL_KEY[mode]);
+        btn.innerHTML = ICON_BY_MODE[mode];
+        btn.setAttribute("aria-label", t("theme_aria", label));
+        btn.setAttribute("data-tooltip", t("theme_tt", label));
       }
     }
     function read() {
@@ -1267,6 +1647,123 @@
       document.getElementById("theme-btn")?.addEventListener("click", cycle);
     });
     mq.addEventListener("change", () => { if (read() === "auto") apply("auto"); });
+    // Re-render label/tooltip when language flips.
+    onLangChange(() => apply(read()));
+  })();
+
+  // ---------- custom tooltip (design-system) ----------
+  // Single floating element reused for every [data-tooltip]. Positioned by JS so it
+  // can flip from below to above when the trigger is near the viewport edge; the
+  // caret arrow tracks back to the trigger's center even after horizontal clamping.
+  (function initTooltips() {
+    const DELAY_SHOW = 200;
+    const DELAY_HIDE = 60;
+    let tipEl = null;
+    let openFor = null;
+    let showTimer = null;
+    let hideTimer = null;
+
+    function ensureEl() {
+      if (tipEl) return tipEl;
+      tipEl = document.createElement("div");
+      tipEl.className = "tt";
+      tipEl.setAttribute("role", "tooltip");
+      tipEl.setAttribute("aria-hidden", "true");
+      document.body.appendChild(tipEl);
+      return tipEl;
+    }
+
+    function place(target) {
+      const tip = ensureEl();
+      const r = target.getBoundingClientRect();
+      // measure once visible-but-transparent so width is correct
+      const tw = tip.offsetWidth;
+      const th = tip.offsetHeight;
+      const vw = window.innerWidth;
+      const vh = window.innerHeight;
+      const gap = 8;
+      const pad = 6;
+
+      // Prefer below; flip above if there isn't room.
+      let top = r.bottom + gap;
+      let pos = "bottom";
+      if (top + th > vh - pad && r.top - gap - th >= pad) {
+        top = r.top - gap - th;
+        pos = "top";
+      }
+      let left = r.left + (r.width - tw) / 2;
+      if (left < pad) left = pad;
+      if (left + tw > vw - pad) left = vw - tw - pad;
+
+      tip.style.left = left + "px";
+      tip.style.top = top + "px";
+      tip.setAttribute("data-pos", pos);
+
+      // caret tracks the trigger's center, even after horizontal clamping
+      const caretX = Math.max(10, Math.min(tw - 10, r.left + r.width / 2 - left));
+      tip.style.setProperty("--caret-x", caretX + "px");
+    }
+
+    function show(target) {
+      const text = target.getAttribute("data-tooltip");
+      if (!text) return;
+      const tip = ensureEl();
+      tip.textContent = text;
+      tip.classList.remove("show");
+      openFor = target;
+      // measure after layout, then place + reveal
+      requestAnimationFrame(() => {
+        if (openFor !== target) return;
+        place(target);
+        // double rAF so the show transition triggers from the placed position
+        requestAnimationFrame(() => {
+          if (openFor === target) tip.classList.add("show");
+        });
+      });
+    }
+
+    function hide() {
+      openFor = null;
+      if (!tipEl) return;
+      tipEl.classList.remove("show");
+    }
+
+    function onEnter(e) {
+      const t = e.target.closest("[data-tooltip]");
+      if (!t) return;
+      clearTimeout(hideTimer);
+      clearTimeout(showTimer);
+      if (openFor === t) return;
+      showTimer = setTimeout(() => show(t), DELAY_SHOW);
+    }
+    function onLeave(e) {
+      const t = e.target.closest("[data-tooltip]");
+      if (!t) return;
+      // ignore leaves into the same element's descendants
+      const to = e.relatedTarget;
+      if (to && t.contains(to)) return;
+      clearTimeout(showTimer);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(hide, DELAY_HIDE);
+    }
+    function onScrollOrResize() {
+      clearTimeout(showTimer);
+      hide();
+    }
+    function onClickAny() {
+      // clicking the trigger should dismiss — user already knows what it does
+      clearTimeout(showTimer);
+      hide();
+    }
+
+    document.addEventListener("mouseover", onEnter, true);
+    document.addEventListener("mouseout", onLeave, true);
+    document.addEventListener("focusin", onEnter, true);
+    document.addEventListener("focusout", onLeave, true);
+    document.addEventListener("mousedown", onClickAny, true);
+    document.addEventListener("keydown", e => { if (e.key === "Escape") hide(); });
+    window.addEventListener("scroll", onScrollOrResize, true);
+    window.addEventListener("resize", onScrollOrResize);
   })();
 
   marked.setOptions({ breaks: true, gfm: true });
@@ -1365,7 +1862,8 @@
   const messagesEl = document.getElementById("messages");
   const sessionsEl = document.getElementById("sessions");
   const statusEl = document.getElementById("status");
-  const fileEl = document.getElementById("file");
+  const sessionTitleEl = document.getElementById("session-title");
+  const copyPathBtn = document.getElementById("copy-path-btn");
   const emptyEl = document.getElementById("empty");
   const latestBtn = document.getElementById("latest-btn");
   const setupEl = document.getElementById("setup");
@@ -1380,7 +1878,10 @@
   const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,table,ul,ol";
   const HEBREW_RE = /[֐-׿יִ-ﭏ]/;
 
-  const rtf = new Intl.RelativeTimeFormat("he", { numeric: "auto" });
+  let rtf = new Intl.RelativeTimeFormat(STRINGS[currentLang]._locale, { numeric: "auto" });
+  onLangChange(lang => {
+    rtf = new Intl.RelativeTimeFormat(STRINGS[lang]._locale, { numeric: "auto" });
+  });
   function relTime(ms) {
     const diff = (ms - Date.now()) / 1000;
     const abs = Math.abs(diff);
@@ -1727,45 +2228,50 @@
     },
   };
 
-  function renderToolBlock(t) {
-    const renderer = toolRenderers[t?.name];
+  function renderToolBlock(tool) {
+    const renderer = toolRenderers[tool?.name];
     let rendered = null;
-    try { rendered = renderer ? renderer(t.input) : null; }
-    catch (err) { console.error(`tool renderer ${t?.name}:`, err); }
+    try { rendered = renderer ? renderer(tool.input) : null; }
+    catch (err) { console.error(`tool renderer ${tool?.name}:`, err); }
 
-    const hasInput = t?.input && typeof t.input === "object" && Object.keys(t.input).length > 0;
+    const hasInput = tool?.input && typeof tool.input === "object" && Object.keys(tool.input).length > 0;
 
     let bodyEl = null;
     if (rendered && typeof rendered.body === "function") {
       try { bodyEl = rendered.body(); }
-      catch (err) { console.error(`tool renderer body ${t?.name}:`, err); bodyEl = null; }
+      catch (err) { console.error(`tool renderer body ${tool?.name}:`, err); bodyEl = null; }
     }
     const usingCustom = !!bodyEl;
     if (!bodyEl && hasInput) {
       bodyEl = el("pre", "tool-entry-input");
-      try { bodyEl.textContent = JSON.stringify(t.input, null, 2); }
-      catch { bodyEl.textContent = String(t.input); }
+      try { bodyEl.textContent = JSON.stringify(tool.input, null, 2); }
+      catch { bodyEl.textContent = String(tool.input); }
     }
     if (!bodyEl) return { summary: rendered?.summary, entry: null };
 
     const entry = el("div", "tool-entry");
     const header = el("div", "tool-entry-header");
-    header.appendChild(el("div", "tool-entry-name", t?.name ?? ""));
+    header.appendChild(el("div", "tool-entry-name", tool?.name ?? ""));
 
     let rawPre = null;
     if (usingCustom && hasInput) {
       rawPre = el("pre", "tool-entry-input tool-raw");
       rawPre.hidden = true;
-      try { rawPre.textContent = JSON.stringify(t.input, null, 2); }
-      catch { rawPre.textContent = String(t.input); }
-      const btn = el("button", "tool-raw-btn", "{ }");
+      try { rawPre.textContent = JSON.stringify(tool.input, null, 2); }
+      catch { rawPre.textContent = String(tool.input); }
+      const btn = el("button", "tool-raw-btn");
       btn.type = "button";
-      btn.title = "raw JSON";
+      btn.innerHTML = ICONS.braces;
+      btn.setAttribute("aria-label", "raw JSON");
+      btn.setAttribute("data-tooltip", t("tt_tool_raw_show"));
+      btn.dataset.rawState = "hidden";
       btn.addEventListener("click", () => {
         const showRaw = rawPre.hidden;
         rawPre.hidden = !showRaw;
         bodyEl.hidden = showRaw;
         btn.classList.toggle("active", showRaw);
+        btn.dataset.rawState = showRaw ? "shown" : "hidden";
+        btn.setAttribute("data-tooltip", t(showRaw ? "tt_tool_raw_hide" : "tt_tool_raw_show"));
       });
       header.appendChild(btn);
     }
@@ -1860,10 +2366,76 @@
     saveExpanded();
   }
 
-  function setStatus(s, cls) {
-    statusEl.textContent = s;
-    statusEl.classList.remove("live", "dead");
-    if (cls) statusEl.classList.add(cls);
+  // setStatus stores the raw class + marker so we can re-translate the
+  // tooltip on language flip without losing the current connection state.
+  // Sources hand us marker strings like "live" / "reconnecting…" / "scanning…";
+  // we translate via STATUS_MARKERS so the user-visible text is localized.
+  const STATUS_MARKERS = {
+    "live": "",
+    "reconnecting…": "status_reconnecting",
+    "scanning…": "status_scanning",
+    "scan failed": "status_scan_failed",
+    "no observer": "status_no_observer",
+    "observe failed": "status_observe_failed",
+  };
+  function _translateStatusSuffix(raw) {
+    if (!raw) return "";
+    if (raw in STATUS_MARKERS) {
+      const key = STATUS_MARKERS[raw];
+      return key ? t(key) : "";
+    }
+    return raw;
+  }
+  let lastStatusCls = "";
+  let lastStatusRaw = "";
+  function _renderStatus() {
+    statusEl.classList.remove("live", "dead", "pending");
+    const suffix = _translateStatusSuffix(lastStatusRaw);
+    let tooltip;
+    if (lastStatusCls === "live") {
+      tooltip = suffix ? t("status_live", suffix) : t("status_live_alone");
+      statusEl.classList.add("live");
+    } else if (lastStatusCls === "dead") {
+      tooltip = suffix ? t("status_dead", suffix) : t("status_dead_alone");
+      statusEl.classList.add("dead");
+    } else {
+      tooltip = suffix || t("status_connecting");
+      statusEl.classList.add("pending");
+    }
+    statusEl.setAttribute("data-tooltip", tooltip);
+    statusEl.setAttribute("aria-label", tooltip);
+  }
+  function setStatus(text, cls) {
+    lastStatusCls = cls || "";
+    lastStatusRaw = text || "";
+    _renderStatus();
+  }
+  onLangChange(() => _renderStatus());
+
+  // Refresh tooltips on language flip for buttons whose tooltip depends on
+  // per-instance state (tool-raw-btn raw shown/hidden, copy-path post-copy).
+  onLangChange(() => {
+    document.querySelectorAll(".tool-raw-btn").forEach(btn => {
+      const shown = btn.dataset.rawState === "shown";
+      btn.setAttribute("data-tooltip", t(shown ? "tt_tool_raw_hide" : "tt_tool_raw_show"));
+    });
+    const cp = document.getElementById("copy-path-btn");
+    if (cp && cp.dataset.copyState === "done") {
+      cp.setAttribute("data-tooltip", t("tt_copy_done"));
+    } else if (cp) {
+      cp.setAttribute("data-tooltip", t("tt_copy_path"));
+    }
+  });
+
+  function updateHeaderForActive() {
+    const meta = activeFile ? sessionsList.find(s => s.path === activeFile) : null;
+    const title = meta?.title || "";
+    if (sessionTitleEl) {
+      sessionTitleEl.textContent = title;
+      sessionTitleEl.hidden = !title;
+      sessionTitleEl.title = title;
+    }
+    if (copyPathBtn) copyPathBtn.hidden = !activeFile;
   }
 
   function applyReset(payload) {
@@ -1871,7 +2443,7 @@
     const wasFirst = !activeFile;
     activeFile = payload.file || null;
     if (wasFirst && activeFile) autoExpandFor(activeFile);
-    fileEl.textContent = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
+    updateHeaderForActive();
     currentMessages = Array.isArray(payload.messages) ? payload.messages.slice() : [];
     messagesEl.innerHTML = "";
     for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
@@ -1924,7 +2496,7 @@
     const preview = document.createElement("div");
     preview.className = "session-preview";
     preview.dir = "auto";
-    preview.textContent = s.preview || "(שיחה ריקה)";
+    preview.textContent = s.preview || t("empty_session");
     children.push(preview);
     const meta = document.createElement("div");
     meta.className = "session-meta";
@@ -1935,11 +2507,11 @@
       proj.title = projectLabel(s.project);
       meta.appendChild(proj);
     }
-    const t = document.createElement("span");
-    t.className = "session-time";
-    t.dataset.mtime = String(s.mtime);
-    t.textContent = relTime(s.mtime);
-    meta.appendChild(t);
+    const timeEl = document.createElement("span");
+    timeEl.className = "session-time";
+    timeEl.dataset.mtime = String(s.mtime);
+    timeEl.textContent = relTime(s.mtime);
+    meta.appendChild(timeEl);
     children.push(meta);
     item.append(...children);
     item.addEventListener("click", () => pinTo(s.path));
@@ -1949,8 +2521,8 @@
   function paintSidebar() {
     sessionsEl.innerHTML = "";
     latestBtn.hidden = mode === "latest";
-    groupBtn.classList.toggle("active", groupByProject);
     groupBtn.setAttribute("aria-pressed", String(groupByProject));
+    groupBtn.setAttribute("data-tooltip", t(groupByProject ? "tt_group_off" : "tt_group_on"));
     collapseAllBtn.hidden = true;
     if (!sessionsList.length) return;
 
@@ -2034,7 +2606,7 @@
 
   const handlers = {
     onStatus: setStatus,
-    onSessions(list) { sessionsList = list; paintSidebar(); },
+    onSessions(list) { sessionsList = list; paintSidebar(); updateHeaderForActive(); },
     onReset: applyReset,
     onAppend: applyAppend,
   };
@@ -2054,8 +2626,6 @@
   latestBtn.addEventListener("click", followLatest);
 
   const groupBtn = document.getElementById("group-btn");
-  groupBtn.classList.toggle("active", groupByProject);
-  groupBtn.setAttribute("aria-pressed", String(groupByProject));
   groupBtn.addEventListener("click", () => {
     groupByProject = !groupByProject;
     localStorage.setItem(GROUP_KEY, groupByProject ? "true" : "false");
@@ -2108,7 +2678,7 @@
     cb.type = "checkbox";
     cb.className = "export-checkbox";
     cb.checked = !exportDeselected.has(uuid);
-    cb.title = "כלול ביצוא";
+    cb.setAttribute("data-tooltip", t("export_include"));
     if (!cb.checked) msgEl.classList.add("export-off");
     cb.addEventListener("change", () => {
       if (cb.checked) { exportDeselected.delete(uuid); msgEl.classList.remove("export-off"); }
@@ -2123,7 +2693,7 @@
   function updateExportSelectionUi() {
     const total = currentMessages.length;
     const selected = total - exportDeselected.size;
-    exportCountEl.textContent = `נבחרו ${selected} מתוך ${total}`;
+    exportCountEl.textContent = `${selected}/${total}`;
     exportSelectAllBtn.hidden = exportDeselected.size === 0;
     exportDeselectAllBtn.hidden = selected === 0;
     exportConfirmBtn.disabled = selected === 0;
@@ -2292,6 +2862,25 @@ ${titleEl}${wrap.outerHTML}
   exportSelectAllBtn.addEventListener("click", selectAllExport);
   exportDeselectAllBtn.addEventListener("click", deselectAllExport);
   exportCancelBtn.addEventListener("click", exitExportMode);
+
+  // ---------- copy full path of the active session ----------
+  let copyResetTimer = null;
+  copyPathBtn?.addEventListener("click", async () => {
+    if (!activeFile) return;
+    try { await navigator.clipboard.writeText(activeFile); }
+    catch (err) { console.error("copy path:", err); return; }
+    copyPathBtn.innerHTML = ICONS.check;
+    copyPathBtn.classList.add("is-active");
+    copyPathBtn.dataset.copyState = "done";
+    copyPathBtn.setAttribute("data-tooltip", t("tt_copy_done"));
+    clearTimeout(copyResetTimer);
+    copyResetTimer = setTimeout(() => {
+      copyPathBtn.innerHTML = ICONS.copy;
+      copyPathBtn.classList.remove("is-active");
+      copyPathBtn.dataset.copyState = "";
+      copyPathBtn.setAttribute("data-tooltip", t("tt_copy_path"));
+    }, 1400);
+  });
 
   // ---------- ServerSource (SSE + /api) ----------
   class ServerSource {
@@ -2704,9 +3293,10 @@ ${titleEl}${wrap.outerHTML}
     sessionsList = [];
     activeFile = null;
     messagesEl.innerHTML = "";
-    fileEl.textContent = "";
+    updateHeaderForActive();
     emptyEl.style.display = "block";
     paintSidebar();
+    setStatus("", "");
     if (mode === "pinned" && pinnedFile) source.setPinned?.(pinnedFile);
     source.start();
   }
@@ -2752,7 +3342,7 @@ ${titleEl}${wrap.outerHTML}
       const perm = await stored.queryPermission?.({ mode: "read" });
       if (perm === "granted") return await useLocal(stored);
       // Need a user gesture to re-grant.
-      showSetup({ folderHint: `לחץ "בחר תיקייה" כדי לחדש הרשאה ל-${stored.name}`, folderWarn: true });
+      showSetup({ folderHint: t("setup_folder_rehydrate", stored.name), folderWarn: true });
       return false;
     } catch {
       return false;
@@ -2769,7 +3359,7 @@ ${titleEl}${wrap.outerHTML}
       setServerUrl(url);
       await useServer(url);
     } else {
-      setupErrorEl.textContent = `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, ושכתובת השרת תקינה.`;
+      setupErrorEl.textContent = t("setup_server_unreachable", url);
       setupErrorEl.hidden = false;
     }
   });
@@ -2781,6 +3371,7 @@ ${titleEl}${wrap.outerHTML}
   });
 
   async function init() {
+    setStatus("", "");
     const pref = localStorage.getItem(SOURCE_KEY);
     if (pref === "local") {
       const ok = await tryRehydrateLocal();
@@ -2793,7 +3384,7 @@ ${titleEl}${wrap.outerHTML}
       const url = getServerUrl();
       const ok = await probeServer(url);
       if (ok) { await useServer(url); return; }
-      showSetup({ error: `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, או החלף לתיקייה ישירה בדפדפן.` });
+      showSetup({ error: t("setup_server_pref_fail", url) });
       return;
     }
     // No preference — first-time visit.
@@ -2822,7 +3413,7 @@ ${titleEl}${wrap.outerHTML}
   function renderSearchResults(hits, q) {
     searchResultsEl.innerHTML = "";
     if (hits.length === 0) {
-      searchResultsEl.innerHTML = `<div class="search-status">אין תוצאות</div>`;
+      searchResultsEl.innerHTML = `<div class="search-status">${escapeHtml(t("search_no_results"))}</div>`;
       return;
     }
     for (const hit of hits) {
@@ -2868,14 +3459,14 @@ ${titleEl}${wrap.outerHTML}
     const reqId = ++searchReqId;
     sessionsEl.hidden = true;
     searchResultsEl.hidden = false;
-    searchResultsEl.innerHTML = `<div class="search-status">מחפש…</div>`;
+    searchResultsEl.innerHTML = `<div class="search-status">${escapeHtml(t("search_searching"))}</div>`;
     try {
       const hits = source ? await source.search(q, 60) : [];
       if (reqId !== searchReqId) return;
       renderSearchResults(hits, q);
     } catch {
       if (reqId !== searchReqId) return;
-      searchResultsEl.innerHTML = `<div class="search-status">שגיאה</div>`;
+      searchResultsEl.innerHTML = `<div class="search-status">${escapeHtml(t("search_error"))}</div>`;
     }
   }
 
