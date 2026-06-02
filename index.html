@@ -1023,6 +1023,35 @@
 
   /* Print: strip all controls and chrome, keep only the conversation. */
   @media print {
+    /* Force the light palette for print, even if the viewer is in dark mode and
+       the browser is set to print background graphics — otherwise light text on
+       dark panels would render as illegible (or invisible) on paper. */
+    :root,
+    :root[data-theme="dark"] {
+      --bg: #ffffff;
+      --panel: #ffffff;
+      --panel-2: #f4f4f5;
+      --user-bg: #eef2ff;
+      --border: #e4e4e7;
+      --border-strong: #d4d4d8;
+      --text: #18181b;
+      --muted: #52525b;
+      --code-bg: #f4f4f5;
+      --accent: #4f46e5;
+      --accent-strong: #4338ca;
+      --hover: #f4f4f5;
+      --active: #e0e7ff;
+      --mark-bg: #fde68a;
+      --mark-text: #78350f;
+      --diff-add-bg: #dcfce7;
+      --diff-add-fg: #14532d;
+      --diff-del-bg: #fee2e2;
+      --diff-del-fg: #7f1d1d;
+      --diff-empty: rgba(0, 0, 0, 0.04);
+      --link: #4f46e5;
+      color-scheme: light;
+    }
+
     #status,
     .top-chrome,
     .sidebar,
@@ -1035,7 +1064,7 @@
     .tool-raw-btn,
     .tool-raw { display: none !important; }
 
-    body { background: #fff; color: #000; }
+    body { background: #ffffff; color: var(--text); }
     .layout {
       display: block;
       max-width: none;
