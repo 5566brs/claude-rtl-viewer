@@ -1,3 +1,67 @@
+<div dir="rtl">
+
+# claude-rtl-viewer
+
+צפייה מקומית בתמלילי שיחות של Claude Code (קבצי `.jsonl`) עם תמיכה נכונה ב-RTL —
+טקסט עברי ואנגלי באותה הודעה כל אחד נשמר בכיוונו. קורא מ-`~/.claude/projects`
+ומשדר את העדכונים בזמן אמת.
+
+## מה הוא עושה
+
+- **מעקב חי** אחר `~/.claude/projects`. שיחות מתעדכנות ככל ש-Claude כותב לדיסק;
+  השיחה החדשה ביותר נעקבת אוטומטית, וניתן גם להצמיד שיחה ספציפית.
+- **תצוגה מפורטת של קריאות לכלים.** כל קריאה לכלי מופיעה כפס דק בין הודעות —
+  לחיצה פותחת אותה. קיים עיצוב ייעודי עבור:
+  - `Edit` — **diff בסגנון git, צד-מול-צד** (ישן | חדש), עם רקע מקווקו לתאים
+    ריקים. מתקפל לעמודה אחת מתחת ל-700px.
+  - `Write` — נתיב הקובץ + תצוגת תוכן.
+  - `Read` — נתיב + טווח שורות / טווח עמודים.
+  - `Bash` — פקודה + תיאור + דגלים (timeout, background).
+  - `TodoWrite` — רשימת משימות עם סימני `[ ]` / `[~]` / `[x]` לפי סטטוס.
+  - `Grep`, `Glob`, `Task`, `WebFetch`, `WebSearch`, `NotebookEdit`, `Skill` —
+    סיכום key/value או תוכן ה-prompt לפי העניין.
+  - כל השאר מציג JSON מעוצב כברירת מחדל.
+  - כפתור `{ }` בכל פריט מחליף בין התצוגה המעובדת ל-JSON גולמי.
+- **תצוגת עץ לפי פרויקטים.** סרגל הצד מקבץ את השיחות לפי תיקיית הפרויקט שלהן.
+  כל קבוצה נפתחת ונסגרת בנפרד, וכפתור "כווץ הכל" סוגר את כולן בלחיצה אחת. ניתן
+  לבטל את הקיבוץ ולקבל רשימה שטוחה ממוינת לפי זמן.
+- **חיפוש חוצה-פרויקטים.** חיפוש AND של מילים בכל שיחה ב-`~/.claude/projects`,
+  ממוין לפי סך המופעים עם מועד אחרון כשובר שוויון. לחיצה על תוצאה קופצת להודעה
+  המדויקת עם הבהוב להדגשה.
+- **ייצוא.** כפתור `JSON` מוריד את הודעות השיחה הפעילה כקובץ JSON. כפתור `HTML`
+  נכנס למצב בחירה — צ׳ק-בוקס בכל הודעה, עם "בחר הכל" / "בטל הכל" / "בטל" — והפלט
+  הוא קובץ HTML עצמאי עם CSS מוטמע, ללא סרגל צד, ללא JS, ברוחב מלא. בהדפסה
+  מוסתרים כל הכפתורים והסרגל ונשאר רק תוכן השיחה.
+- **שני מקורות נתונים.** שרת [Bun](https://bun.sh/) מקומי שמשדר ב-SSE, או מצב
+  דפדפן-בלבד בעזרת File System Access API + `FileSystemObserver` (דפדפנים
+  מבוססי Chromium — Chrome / Edge).
+
+## דרישות
+
+- [Bun](https://bun.sh/) 1.0 ומעלה.
+
+## הפעלה
+
+```bash
+bun run start    # מאזין על $PORT, ברירת מחדל 5577
+bun run dev      # אותו דבר עם hot reload דרך `bun --watch`
+```
+
+ואז פתח <http://localhost:5577>.
+
+ספריית התמלילים היא `~/.claude/projects` כברירת מחדל (נגזרת מספריית הבית של
+משתמש מערכת ההפעלה הנוכחי). ניתן לעקוף עם משתנה הסביבה `CLAUDE_PROJECTS_DIR` אם
+שלך נמצאת במקום אחר — זה כלי מקומי חד-משתמשי, ובכוונה ללא שכבת קונפיגורציה
+עמוקה יותר.
+
+## רישיון
+
+MIT — ראה [LICENSE](LICENSE).
+
+</div>
+
+---
+
 # claude-rtl-viewer
 
 A local viewer for Claude Code transcripts (`.jsonl`) with proper RTL support —
@@ -21,9 +85,17 @@ from `~/.claude/projects` and tails it live.
     key/value summary or prompt body as appropriate.
   - Anything else falls back to a pretty-printed JSON dump.
   - A `{ }` button on each entry swaps the rendered view for the raw JSON.
+- **Project tree.** The sidebar groups sessions by their project folder. Each
+  group expands or collapses independently, and a "Collapse all" button wipes
+  them in one click. Grouping can be turned off for a flat, time-sorted list.
 - **Cross-project search.** AND-of-words across every session in
   `~/.claude/projects`, ranked by total occurrences with recency as the
   tiebreaker. Clicking a hit jumps to the exact message with a flash highlight.
+- **Export.** A `JSON` button downloads the active session's parsed messages
+  as a JSON file. An `HTML` button enters a selection mode — checkbox per
+  message, with select-all / deselect-all / cancel — and produces a standalone
+  HTML file with embedded CSS, no sidebar, no JS, full-width. Printing strips
+  all buttons and the sidebar and leaves just the conversation.
 - **Two data sources.** A local [Bun](https://bun.sh/) server that streams via
   SSE, or a browser-only mode using the File System Access API +
   `FileSystemObserver` (Chromium-based browsers — Chrome / Edge).
