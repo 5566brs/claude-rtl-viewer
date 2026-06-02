@@ -52,8 +52,13 @@
     display: flex;
     justify-content: space-between;
     align-items: baseline;
-    margin-bottom: 14px;
     direction: ltr;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+    padding: 10px 0 8px;
+    margin-bottom: 6px;
   }
   .main-header h1 {
     font-size: 13px;
@@ -868,7 +873,7 @@
   .export-actions .ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
   .export-bar {
     position: sticky;
-    top: 0;
+    top: 48px;
     z-index: 4;
     display: flex;
     gap: 8px;
