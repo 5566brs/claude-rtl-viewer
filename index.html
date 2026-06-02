@@ -593,13 +593,25 @@
   .project-header.is-open.has-active { background: var(--active); }
   .project-toggle {
     color: var(--muted);
-    font-size: 13px;
-    line-height: 1;
     width: 14px;
-    text-align: center;
+    height: 14px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     flex-shrink: 0;
+    transition: color 180ms ease;
+  }
+  .project-toggle svg {
+    display: block;
+    width: 14px;
+    height: 14px;
+    transition: transform 200ms cubic-bezier(0.4, 0, 0.2, 1);
   }
   .project-header.is-open .project-toggle { color: var(--accent); }
+  .project-header.is-open .project-toggle svg { transform: rotate(90deg); }
+  @media (prefers-reduced-motion: reduce) {
+    .project-toggle svg { transition: none; }
+  }
   .project-name {
     flex: 1;
     overflow: hidden;
@@ -625,11 +637,23 @@
     direction: ltr;
     unicode-bidi: plaintext;
   }
+  .ps-wrap {
+    display: grid;
+    grid-template-rows: 1fr;
+    transition: grid-template-rows 220ms cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  .ps-wrap.is-closed { grid-template-rows: 0fr; }
+  .ps-wrap > .project-sessions {
+    overflow: hidden;
+    min-height: 0;
+  }
   .project-sessions {
     background: var(--panel-2);
     border-inline-start: 2px solid var(--accent);
   }
-  .project-sessions[hidden] { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .ps-wrap { transition: none; }
+  }
   .hit-project mark, .project-name mark, .session-project mark {
     background: var(--mark-bg);
     color: var(--mark-text);
@@ -1193,11 +1217,24 @@
   <span>@ 2026</span>
 </div>
 <script>
+  // ---------- inline icons (Lucide, MIT-licensed — lucide.dev) ----------
+  // Stroke-based so they inherit color via `currentColor`. Keep sizes/strokes consistent.
+  const ICONS = {
+    sun: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>',
+    moon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>',
+    monitor: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>',
+    chevronRight: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>',
+  };
+
   // ---------- theme (light / dark / auto) ----------
   (function initTheme() {
     const KEY = "rtl-viewer:theme";
     const order = ["light", "dark", "auto"];
-    const labels = { light: { icon: "☀", text: "בהיר" }, dark: { icon: "☾", text: "כהה" }, auto: { icon: "◐", text: "אוטו" } };
+    const labels = {
+      light: { icon: ICONS.sun, text: "בהיר" },
+      dark:  { icon: ICONS.moon, text: "כהה" },
+      auto:  { icon: ICONS.monitor, text: "אוטו" },
+    };
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
 
     function resolve(mode) {
@@ -1209,7 +1246,7 @@
       const btn = document.getElementById("theme-btn");
       if (btn) {
         const l = labels[mode];
-        btn.innerHTML = `<span class="theme-icon" aria-hidden="true">${l.icon}</span><span>${l.text}</span>`;
+        btn.innerHTML = `<span class="theme-icon">${l.icon}</span><span>${l.text}</span>`;
         btn.setAttribute("aria-label", `מצב תצוגה: ${l.text}. לחץ להחלפה.`);
       }
     }
@@ -1950,7 +1987,7 @@
 
       const toggle = document.createElement("span");
       toggle.className = "project-toggle";
-      toggle.textContent = isOpen ? "▼" : "▶";
+      toggle.innerHTML = ICONS.chevronRight;
 
       const name = document.createElement("span");
       name.className = "project-name";
@@ -1967,20 +2004,30 @@
       time.textContent = relTime(g.maxMtime);
 
       header.append(toggle, name, count, time);
-      header.addEventListener("click", () => {
-        if (expandedProjects.has(project)) expandedProjects.delete(project);
-        else expandedProjects.add(project);
-        saveExpanded();
-        paintSidebar();
-      });
       wrap.appendChild(header);
+
+      const psWrap = document.createElement("div");
+      psWrap.className = "ps-wrap" + (isOpen ? "" : " is-closed");
 
       const list = document.createElement("div");
       list.className = "project-sessions";
-      if (!isOpen) list.hidden = true;
       g.sessions.sort((a, b) => b.mtime - a.mtime);
       for (const s of g.sessions) list.appendChild(renderSessionItem(s, latestSession, false));
-      wrap.appendChild(list);
+      psWrap.appendChild(list);
+      wrap.appendChild(psWrap);
+
+      // In-place toggle so the chevron + list animations actually play. paintSidebar
+      // would rebuild the DOM and the new element would start in its final state.
+      header.addEventListener("click", () => {
+        const wasOpen = expandedProjects.has(project);
+        if (wasOpen) expandedProjects.delete(project);
+        else expandedProjects.add(project);
+        saveExpanded();
+        header.classList.toggle("is-open", !wasOpen);
+        psWrap.classList.toggle("is-closed", wasOpen);
+        collapseAllBtn.hidden = expandedProjects.size === 0;
+      });
+
       sessionsEl.appendChild(wrap);
     }
   }
