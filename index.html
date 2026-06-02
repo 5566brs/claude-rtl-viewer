@@ -853,6 +853,62 @@
     text-underline-offset: 2px;
   }
   .setup-privacy a:hover { color: var(--accent); }
+
+  /* Export */
+  .header-right {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+    justify-content: flex-end;
+  }
+  .export-actions { display: flex; gap: 6px; flex-shrink: 0; }
+  .export-actions .ghost-btn { font-size: 11px; padding: 3px 9px; }
+  .export-actions .ghost-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .export-bar {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 12px;
+    margin-bottom: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    direction: rtl;
+  }
+  .export-bar-spacer { flex: 1; }
+  .export-count {
+    font-size: 11px;
+    color: var(--muted);
+    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  .export-bar .latest-btn.active { cursor: pointer; }
+  #messages.export-mode .msg { position: relative; }
+  #messages.export-mode .msg.user,
+  #messages.export-mode .msg.assistant { padding-left: 46px; }
+  #messages.export-mode .msg.tool { padding-left: 34px; }
+  .export-checkbox {
+    position: absolute;
+    left: 14px;
+    top: 18px;
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    accent-color: var(--accent);
+    z-index: 2;
+    margin: 0;
+  }
+  #messages.export-mode .msg.tool .export-checkbox {
+    left: 8px;
+    top: 6px;
+    width: 14px;
+    height: 14px;
+  }
+  .msg.export-off { opacity: 0.35; }
 </style>
 </head>
 <body dir="auto">
@@ -908,7 +964,21 @@
   <main class="main">
     <div class="main-header">
       <h1>Claude RTL viewer</h1>
-      <span id="file"></span>
+      <div class="header-right">
+        <span id="file"></span>
+        <div class="export-actions">
+          <button id="export-json-btn" class="ghost-btn" type="button" title="ייצא את השיחה כ-JSON" disabled>JSON</button>
+          <button id="export-html-btn" class="ghost-btn" type="button" title="ייצא את השיחה כ-HTML" disabled>HTML</button>
+        </div>
+      </div>
+    </div>
+    <div id="export-bar" class="export-bar" hidden>
+      <button id="export-confirm" class="latest-btn active" type="button">ייצא נבחרים</button>
+      <button id="export-select-all" class="ghost-btn" type="button" hidden>בחר הכל</button>
+      <button id="export-deselect-all" class="ghost-btn" type="button">בטל הכל</button>
+      <span class="export-bar-spacer"></span>
+      <span id="export-count" class="export-count"></span>
+      <button id="export-cancel" class="ghost-btn" type="button">בטל</button>
     </div>
     <div id="messages"></div>
     <div id="empty">ממתין לשיחה…</div>
@@ -1505,6 +1575,9 @@
   let sessionsList = [];
   let pendingScrollUuid = null;
   let source = null;            // current Source instance
+  let currentMessages = [];     // parsed messages of the active session
+  let exportMode = false;
+  let exportDeselected = new Set(); // uuids the user un-ticked while in export mode
 
   const EXPANDED_KEY = "rtl-viewer:expanded-projects";
   const GROUP_KEY = "rtl-viewer:group-by-project";
@@ -1536,13 +1609,16 @@
   }
 
   function applyReset(payload) {
+    if (exportMode) exitExportMode();
     const wasFirst = !activeFile;
     activeFile = payload.file || null;
     if (wasFirst && activeFile) autoExpandFor(activeFile);
     fileEl.textContent = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
+    currentMessages = Array.isArray(payload.messages) ? payload.messages.slice() : [];
     messagesEl.innerHTML = "";
     for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
     emptyEl.style.display = payload.messages.length ? "none" : "block";
+    updateExportButtons();
     if (pendingScrollUuid) {
       const target = messagesEl.querySelector(`[data-uuid="${CSS.escape(pendingScrollUuid)}"]`);
       pendingScrollUuid = null;
@@ -1563,8 +1639,12 @@
 
   function applyAppend(m) {
     const stick = nearBottom();
-    messagesEl.appendChild(renderMessage(m));
+    currentMessages.push(m);
+    const node = renderMessage(m);
+    messagesEl.appendChild(node);
+    if (exportMode) addExportCheckbox(node);
     emptyEl.style.display = "none";
+    updateExportButtons();
     if (stick) requestAnimationFrame(scrollMainToBottom);
   }
 
@@ -1721,6 +1801,229 @@
     saveExpanded();
     paintSidebar();
   });
+
+  // ---------- export ----------
+  const exportJsonBtn = document.getElementById("export-json-btn");
+  const exportHtmlBtn = document.getElementById("export-html-btn");
+  const exportBar = document.getElementById("export-bar");
+  const exportConfirmBtn = document.getElementById("export-confirm");
+  const exportSelectAllBtn = document.getElementById("export-select-all");
+  const exportDeselectAllBtn = document.getElementById("export-deselect-all");
+  const exportCancelBtn = document.getElementById("export-cancel");
+  const exportCountEl = document.getElementById("export-count");
+
+  function updateExportButtons() {
+    const has = currentMessages.length > 0 && !!activeFile;
+    exportJsonBtn.disabled = !has || exportMode;
+    exportHtmlBtn.disabled = !has || exportMode;
+  }
+
+  function exportFilenameBase() {
+    if (!activeFile) return "session";
+    return (activeFile.split(/[\\\/]/).pop() || "session").replace(/\.jsonl$/i, "");
+  }
+
+  function triggerDownload(blob, filename) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+
+  function addExportCheckbox(msgEl) {
+    if (!msgEl || msgEl.querySelector(":scope > .export-checkbox")) return;
+    const uuid = msgEl.dataset.uuid;
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.className = "export-checkbox";
+    cb.checked = !exportDeselected.has(uuid);
+    cb.title = "כלול ביצוא";
+    if (!cb.checked) msgEl.classList.add("export-off");
+    cb.addEventListener("change", () => {
+      if (cb.checked) { exportDeselected.delete(uuid); msgEl.classList.remove("export-off"); }
+      else { exportDeselected.add(uuid); msgEl.classList.add("export-off"); }
+      updateExportSelectionUi();
+    });
+    // Stop clicks on the checkbox from collapsing tool <details>.
+    cb.addEventListener("click", e => e.stopPropagation());
+    msgEl.insertBefore(cb, msgEl.firstChild);
+  }
+
+  function updateExportSelectionUi() {
+    const total = currentMessages.length;
+    const selected = total - exportDeselected.size;
+    exportCountEl.textContent = `נבחרו ${selected} מתוך ${total}`;
+    exportSelectAllBtn.hidden = exportDeselected.size === 0;
+    exportDeselectAllBtn.hidden = selected === 0;
+    exportConfirmBtn.disabled = selected === 0;
+  }
+
+  function enterExportMode() {
+    if (!activeFile || !currentMessages.length) return;
+    exportMode = true;
+    exportDeselected = new Set();
+    messagesEl.classList.add("export-mode");
+    messagesEl.querySelectorAll(":scope > .msg").forEach(addExportCheckbox);
+    exportBar.hidden = false;
+    updateExportSelectionUi();
+    updateExportButtons();
+  }
+
+  function exitExportMode() {
+    exportMode = false;
+    exportDeselected = new Set();
+    messagesEl.classList.remove("export-mode");
+    messagesEl.querySelectorAll(".export-checkbox").forEach(el => el.remove());
+    messagesEl.querySelectorAll(".export-off").forEach(el => el.classList.remove("export-off"));
+    exportBar.hidden = true;
+    updateExportButtons();
+  }
+
+  function selectAllExport() {
+    exportDeselected.clear();
+    messagesEl.querySelectorAll(":scope > .msg").forEach(msgEl => {
+      msgEl.classList.remove("export-off");
+      const cb = msgEl.querySelector(":scope > .export-checkbox");
+      if (cb) cb.checked = true;
+    });
+    updateExportSelectionUi();
+  }
+
+  function deselectAllExport() {
+    exportDeselected = new Set(currentMessages.map(m => m.uuid));
+    messagesEl.querySelectorAll(":scope > .msg").forEach(msgEl => {
+      msgEl.classList.add("export-off");
+      const cb = msgEl.querySelector(":scope > .export-checkbox");
+      if (cb) cb.checked = false;
+    });
+    updateExportSelectionUi();
+  }
+
+  function exportJson() {
+    if (!currentMessages.length) return;
+    const payload = {
+      file: activeFile,
+      exportedAt: new Date().toISOString(),
+      messages: currentMessages,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    triggerDownload(blob, exportFilenameBase() + ".json");
+  }
+
+  // Minimal CSS for the standalone export — message styling only, no app chrome.
+  const EXPORT_STYLES = `
+:root{--bg:#f6f6f4;--panel:#fff;--panel-2:#fbfaf6;--user-bg:#e8f0fb;--border:#e8e8e3;--border-strong:#d8d6cf;--text:#1f1f1c;--muted:#8a8a85;--code-bg:#f1efe9;--accent:#2a662a;}
+*{box-sizing:border-box;}
+html,body{margin:0;padding:0;}
+body{font-family:"Segoe UI","Heebo","Arial Hebrew",-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.65;padding:24px;}
+.exported-title{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;color:var(--muted);direction:ltr;margin:0 0 14px;}
+.msg{margin:0 0 16px;padding:18px 22px;border-radius:12px;word-wrap:break-word;overflow-wrap:anywhere;}
+.msg.user{background:var(--user-bg);}
+.msg.assistant{background:var(--panel);border:1px solid var(--border);}
+.msg.tool{margin:4px 0 10px;padding:3px 12px;border-radius:0;border-inline-start:2px solid var(--border-strong);background:transparent;color:var(--muted);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;letter-spacing:.2px;}
+.msg.tool details>summary{cursor:pointer;list-style:none;user-select:none;}
+.msg.tool details>summary::-webkit-details-marker{display:none;}
+.msg.tool details>summary::before{content:"▸";display:inline-block;width:12px;color:var(--muted);}
+.msg.tool details[open]>summary::before{content:"▾";}
+.tool-details{margin-top:6px;padding:8px 10px;background:var(--panel-2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;letter-spacing:normal;display:flex;flex-direction:column;gap:8px;}
+.tool-entry-header{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;}
+.tool-entry-name{font-weight:600;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;}
+.tool-block{display:flex;flex-direction:column;gap:4px;}
+.tool-path{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:12px;color:var(--text);word-break:break-all;direction:ltr;}
+.tool-meta{font-size:11px;color:var(--muted);direction:ltr;word-break:break-word;}
+.tool-tag{align-self:flex-start;font-size:10px;color:var(--muted);padding:1px 6px;border:1px solid var(--border-strong);border-radius:4px;font-family:ui-monospace,monospace;}
+.tool-task-desc{font-size:12px;color:var(--text);unicode-bidi:plaintext;}
+.tool-code{margin:0;padding:6px 8px;background:var(--code-bg);border-radius:4px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-word;max-height:360px;overflow:auto;direction:ltr;text-align:left;unicode-bidi:embed;}
+.tool-kv{margin:0;display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:12px;direction:ltr;}
+.tool-kv dt{color:var(--muted);font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;}
+.tool-kv dd{margin:0;word-break:break-word;}
+.tool-diff{margin:0;background:var(--code-bg);border-radius:4px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;line-height:1.5;direction:ltr;text-align:left;unicode-bidi:embed;max-height:480px;overflow:auto;}
+.diff-row{display:flex;}
+.diff-side{flex:1 1 50%;min-width:0;display:flex;padding:0 6px;min-height:1.5em;white-space:pre;}
+.diff-side.diff-left{border-inline-end:1px solid var(--border);}
+.diff-side.diff-ctx{color:var(--muted);}
+.diff-side.diff-del{background:#f2cdcd;color:#5a1717;}
+.diff-side.diff-add{background:#d4edcd;color:#1e3a1e;}
+.diff-side.diff-empty{background-image:repeating-linear-gradient(-45deg,transparent 0,transparent 5px,rgba(0,0,0,.05) 5px,rgba(0,0,0,.05) 6px);}
+.diff-mark{flex-shrink:0;width:14px;user-select:none;text-align:center;}
+.diff-text{white-space:pre;flex:1;min-width:0;}
+@media (max-width:700px){.diff-row{flex-direction:column;}.diff-side{flex-basis:auto;border-inline-end:0!important;}.diff-side.diff-empty{display:none;}.diff-row-ctx .diff-right{display:none;}}
+.tool-diff-fallback{display:flex;flex-direction:column;gap:6px;}
+.tool-entry-input{margin:0;padding:6px 8px;background:var(--code-bg);border-radius:4px;font-size:11px;line-height:1.5;white-space:pre-wrap;word-break:break-all;max-height:360px;overflow:auto;direction:ltr;text-align:left;unicode-bidi:embed;}
+.todo-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:3px;direction:ltr;}
+.todo{display:flex;gap:8px;align-items:baseline;}
+.todo-mark{flex-shrink:0;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;color:var(--muted);width:22px;}
+.todo-text{font-size:13px;line-height:1.5;unicode-bidi:plaintext;flex:1;}
+.todo-completed .todo-mark{color:var(--accent);}
+.todo-completed .todo-text{color:var(--muted);text-decoration:line-through;}
+.todo-in_progress .todo-mark{color:var(--accent);}
+.todo-in_progress .todo-text{font-weight:600;}
+.role{font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;letter-spacing:.6px;font-family:ui-monospace,monospace;direction:ltr;unicode-bidi:isolate;}
+.body{unicode-bidi:isolate;}
+.body>*:first-child{margin-top:0;}
+.body>*:last-child{margin-bottom:0;}
+.body p,.body li,.body h1,.body h2,.body h3,.body h4,.body h5,.body h6,.body blockquote,.body ul,.body ol,.body table,.body td,.body th{unicode-bidi:isolate;}
+.body p{margin:.55em 0;}
+.body h1,.body h2,.body h3,.body h4{margin:.8em 0 .4em;line-height:1.3;}
+.body h1{font-size:1.35em;}.body h2{font-size:1.18em;}.body h3{font-size:1.05em;}
+.body ul,.body ol{padding-inline-start:26px;margin:.4em 0;}
+.body li{margin:.2em 0;}
+.body blockquote{border-inline-start:3px solid #d0cec7;margin:.5em 0;padding:.1em 12px;color:#555;}
+.body pre{background:var(--code-bg);padding:10px 12px;border-radius:6px;overflow-x:auto;direction:ltr;text-align:left;unicode-bidi:embed;font-size:.88em;line-height:1.5;}
+.body code{background:var(--code-bg);padding:1px 6px;border-radius:3px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:.9em;direction:ltr;unicode-bidi:embed;}
+.body pre code{background:none;padding:0;font-size:1em;}
+.body a{color:#1a5fb4;}
+.body table{border-collapse:collapse;margin:.5em 0;}
+.body th,.body td{border:1px solid var(--border);padding:4px 8px;text-align:start;}
+`.trim();
+
+  function exportHtml() {
+    if (!currentMessages.length) return;
+    const wrap = document.createElement("div");
+    wrap.className = "exported-messages";
+    messagesEl.querySelectorAll(":scope > .msg").forEach(msgEl => {
+      if (exportDeselected.has(msgEl.dataset.uuid)) return;
+      const clone = msgEl.cloneNode(true);
+      clone.classList.remove("export-off");
+      clone.querySelectorAll(".export-checkbox").forEach(n => n.remove());
+      // Static HTML can't toggle raw JSON — drop the toggle button + hidden raw pane.
+      clone.querySelectorAll(".tool-raw-btn").forEach(n => n.remove());
+      clone.querySelectorAll(".tool-raw").forEach(n => n.remove());
+      wrap.appendChild(clone);
+    });
+    if (!wrap.children.length) return;
+    const fileLabel = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
+    const title = exportFilenameBase();
+    const titleEl = fileLabel ? `<div class="exported-title">${escapeHtml(fileLabel)}</div>\n` : "";
+    const html = `<!doctype html>
+<html lang="he">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${escapeHtml(title)}</title>
+<style>
+${EXPORT_STYLES}
+</style>
+</head>
+<body dir="auto">
+${titleEl}${wrap.outerHTML}
+</body>
+</html>
+`;
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    triggerDownload(blob, title + ".html");
+    exitExportMode();
+  }
+
+  exportJsonBtn.addEventListener("click", exportJson);
+  exportHtmlBtn.addEventListener("click", enterExportMode);
+  exportConfirmBtn.addEventListener("click", exportHtml);
+  exportSelectAllBtn.addEventListener("click", selectAllExport);
+  exportDeselectAllBtn.addEventListener("click", deselectAllExport);
+  exportCancelBtn.addEventListener("click", exitExportMode);
 
   // ---------- ServerSource (SSE + /api) ----------
   class ServerSource {
