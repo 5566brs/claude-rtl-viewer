@@ -4,31 +4,103 @@
 <meta charset="utf-8" />
 <title>Claude RTL Viewer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script>
+  // Resolve theme before first paint so dark mode doesn't flash light.
+  (function () {
+    try {
+      var stored = localStorage.getItem("rtl-viewer:theme");
+      var mode = (stored === "light" || stored === "dark" || stored === "auto") ? stored : "auto";
+      var resolved = mode === "auto"
+        ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : mode;
+      document.documentElement.setAttribute("data-theme", resolved);
+    } catch (e) { /* localStorage may be blocked */ }
+  })();
+</script>
 <script src="https://cdn.jsdelivr.net/npm/marked@12/marked.min.js"></script>
 <style>
   :root {
-    --bg: #f6f6f4;
+    --bg: #fafafa;
     --panel: #ffffff;
-    --panel-2: #fbfaf6;
-    --user-bg: #e8f0fb;
-    --border: #e8e8e3;
-    --border-strong: #d8d6cf;
-    --text: #1f1f1c;
-    --muted: #8a8a85;
-    --code-bg: #f1efe9;
-    --accent: #2a662a;
-    --hover: #efece4;
-    --active: #ddebda;
+    --panel-2: #f4f4f5;
+    --user-bg: #eef2ff;
+    --border: #e4e4e7;
+    --border-strong: #d4d4d8;
+    --text: #18181b;
+    --muted: #71717a;
+    --code-bg: #f4f4f5;
+    --accent: #6366f1;
+    --accent-strong: #4f46e5;
+    --hover: #f4f4f5;
+    --active: #e0e7ff;
+    --mark-bg: #fde68a;
+    --mark-text: #78350f;
+    --status-live-bg: #dcfce7;
+    --status-live-fg: #166534;
+    --status-dead-bg: #fee2e2;
+    --status-dead-fg: #991b1b;
+    --status-pending-bg: #e4e4e7;
+    --status-pending-fg: #52525b;
+    --diff-add-bg: #dcfce7;
+    --diff-add-fg: #14532d;
+    --diff-del-bg: #fee2e2;
+    --diff-del-fg: #7f1d1d;
+    --diff-empty: rgba(0, 0, 0, 0.04);
+    --link: #4f46e5;
+    --error-bg: #fee2e2;
+    --error-fg: #991b1b;
+    --focus-ring: #a5b4fc;
+    --font-ui: "Geist", "Heebo", -apple-system, "Segoe UI", system-ui, sans-serif;
+    --font-mono: "Geist Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d0d10;
+    --panel: #18181b;
+    --panel-2: #1e1e22;
+    --user-bg: #1e1b4b;
+    --border: #27272a;
+    --border-strong: #3f3f46;
+    --text: #e4e4e7;
+    --muted: #a1a1aa;
+    --code-bg: #131316;
+    --accent: #818cf8;
+    --accent-strong: #a5b4fc;
+    --hover: #232329;
+    --active: #312e81;
+    --mark-bg: rgba(252, 211, 77, 0.22);
+    --mark-text: #fde68a;
+    --status-live-bg: #14532d;
+    --status-live-fg: #86efac;
+    --status-dead-bg: #450a0a;
+    --status-dead-fg: #fca5a5;
+    --status-pending-bg: #27272a;
+    --status-pending-fg: #a1a1aa;
+    --diff-add-bg: rgba(34, 197, 94, 0.15);
+    --diff-add-fg: #bbf7d0;
+    --diff-del-bg: rgba(239, 68, 68, 0.15);
+    --diff-del-fg: #fecaca;
+    --diff-empty: rgba(255, 255, 255, 0.04);
+    --link: #a5b4fc;
+    --error-bg: rgba(239, 68, 68, 0.15);
+    --error-fg: #fca5a5;
+    --focus-ring: #6366f1;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   [hidden] { display: none !important; }
   html, body { margin: 0; padding: 0; }
   body {
-    font-family: "Segoe UI", "Heebo", "Arial Hebrew", -apple-system, sans-serif;
+    font-family: var(--font-ui);
     background: var(--bg);
     color: var(--text);
     font-size: 15px;
     line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
   .layout {
@@ -68,7 +140,7 @@
     letter-spacing: 0.3px;
   }
   #file {
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--muted);
     direction: ltr;
@@ -84,14 +156,14 @@
     inset-inline-start: 12px;
     font-size: 10px;
     padding: 3px 9px;
-    border-radius: 10px;
-    background: #e0ddd6;
-    color: #6b6b66;
-    font-family: ui-monospace, monospace;
+    border-radius: 999px;
+    background: var(--status-pending-bg);
+    color: var(--status-pending-fg);
+    font-family: var(--font-mono);
     z-index: 10;
   }
-  #status.live { background: #d4ecd4; color: var(--accent); }
-  #status.dead { background: #f1d4d4; color: #a33; }
+  #status.live { background: var(--status-live-bg); color: var(--status-live-fg); }
+  #status.dead { background: var(--status-dead-bg); color: var(--status-dead-fg); }
 
   .msg {
     margin: 0 0 16px;
@@ -109,7 +181,7 @@
     border-inline-start: 2px solid var(--border-strong);
     background: transparent;
     color: var(--muted);
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     letter-spacing: 0.2px;
   }
@@ -160,7 +232,7 @@
     color: var(--muted);
     border-radius: 4px;
     padding: 1px 7px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 10px;
     cursor: pointer;
     line-height: 1.4;
@@ -169,12 +241,12 @@
   .tool-raw-btn.active {
     background: var(--active);
     color: var(--accent);
-    border-color: #b6d4af;
+    border-color: var(--accent);
   }
   .tool-raw { margin-top: 6px; }
   .tool-block { display: flex; flex-direction: column; gap: 4px; }
   .tool-path {
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 12px;
     color: var(--text);
     word-break: break-all;
@@ -193,7 +265,7 @@
     padding: 1px 6px;
     border: 1px solid var(--border-strong);
     border-radius: 4px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
   }
   .tool-task-desc {
     font-size: 12px;
@@ -205,7 +277,7 @@
     padding: 6px 8px;
     background: var(--code-bg);
     border-radius: 4px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     line-height: 1.5;
     white-space: pre-wrap;
@@ -226,7 +298,7 @@
   }
   .tool-kv dt {
     color: var(--muted);
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
   }
   .tool-kv dd { margin: 0; word-break: break-word; }
@@ -234,7 +306,7 @@
     margin: 0;
     background: var(--code-bg);
     border-radius: 4px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     line-height: 1.5;
     direction: ltr;
@@ -254,15 +326,15 @@
   }
   .diff-side.diff-left { border-inline-end: 1px solid var(--border); }
   .diff-side.diff-ctx { color: var(--muted); }
-  .diff-side.diff-del { background: #f2cdcd; color: #5a1717; }
-  .diff-side.diff-add { background: #d4edcd; color: #1e3a1e; }
+  .diff-side.diff-del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+  .diff-side.diff-add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
   .diff-side.diff-empty {
     background-image: repeating-linear-gradient(
       -45deg,
       transparent 0,
       transparent 5px,
-      rgba(0, 0, 0, 0.05) 5px,
-      rgba(0, 0, 0, 0.05) 6px
+      var(--diff-empty) 5px,
+      var(--diff-empty) 6px
     );
   }
   .diff-mark {
@@ -310,7 +382,7 @@
   }
   .todo-mark {
     flex-shrink: 0;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 11px;
     color: var(--muted);
     width: 22px;
@@ -334,7 +406,7 @@
     color: var(--muted);
     margin-bottom: 6px;
     letter-spacing: 0.6px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     direction: ltr;
     unicode-bidi: isolate;
   }
@@ -354,10 +426,10 @@
   .body ul, .body ol { padding-inline-start: 26px; margin: 0.4em 0; }
   .body li { margin: 0.2em 0; }
   .body blockquote {
-    border-inline-start: 3px solid #d0cec7;
+    border-inline-start: 3px solid var(--border-strong);
     margin: 0.5em 0;
     padding: 0.1em 12px;
-    color: #555;
+    color: var(--muted);
   }
   .body pre {
     background: var(--code-bg);
@@ -374,13 +446,13 @@
     background: var(--code-bg);
     padding: 1px 6px;
     border-radius: 3px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
     direction: ltr;
     unicode-bidi: embed;
   }
   .body pre code { background: none; padding: 0; font-size: 1em; }
-  .body a { color: #1a5fb4; }
+  .body a { color: var(--link); }
   .body table { border-collapse: collapse; margin: 0.5em 0; }
   .body th, .body td {
     border: 1px solid var(--border);
@@ -442,7 +514,7 @@
   }
   .latest-btn.active {
     background: var(--active);
-    border-color: #b6d4af;
+    border-color: var(--accent);
     color: var(--accent);
   }
   .latest-btn:hover { background: var(--hover); }
@@ -461,6 +533,19 @@
     background: var(--hover);
     color: var(--text);
     border-color: var(--border-strong);
+  }
+  .theme-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    padding: 3px 9px;
+    min-width: 0;
+  }
+  .theme-btn .theme-icon {
+    font-size: 12px;
+    line-height: 1;
+    display: inline-block;
   }
 
   #sessions {
@@ -487,10 +572,10 @@
   .project-header:hover { background: var(--hover); }
   .project-header.has-active { background: var(--active); }
   .project-header.is-open {
-    background: #eef4ec;
+    background: var(--panel-2);
     border-bottom: 1px solid var(--border);
   }
-  .project-header.is-open.has-active { background: #e1ecdf; }
+  .project-header.is-open.has-active { background: var(--active); }
   .project-toggle {
     color: var(--muted);
     font-size: 13px;
@@ -514,13 +599,13 @@
   .project-count {
     color: var(--muted);
     font-size: 10px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     flex-shrink: 0;
   }
   .project-time {
     color: var(--muted);
     font-size: 10px;
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     flex-shrink: 0;
     direction: ltr;
     unicode-bidi: plaintext;
@@ -531,8 +616,8 @@
   }
   .project-sessions[hidden] { display: none; }
   .hit-project mark, .project-name mark, .session-project mark {
-    background: #ffe89e;
-    color: inherit;
+    background: var(--mark-bg);
+    color: var(--mark-text);
     padding: 0 2px;
     border-radius: 2px;
   }
@@ -576,7 +661,7 @@
     margin-top: 4px;
     font-size: 10px;
     color: var(--muted);
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     direction: ltr;
     text-align: start;
     unicode-bidi: plaintext;
@@ -609,7 +694,10 @@
     font-family: inherit;
     outline: none;
   }
-  .sidebar-search input:focus { border-color: #b6d4af; }
+  .sidebar-search input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
 
   #page-credit {
     position: fixed;
@@ -618,7 +706,7 @@
     direction: ltr;
     font-size: 10px;
     color: var(--muted);
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     z-index: 5;
     pointer-events: auto;
     white-space: nowrap;
@@ -649,7 +737,7 @@
   .hit-meta {
     font-size: 10px;
     color: var(--muted);
-    font-family: ui-monospace, monospace;
+    font-family: var(--font-mono);
     display: flex;
     justify-content: space-between;
     gap: 8px;
@@ -676,15 +764,15 @@
     word-break: break-word;
   }
   .hit-snippet mark {
-    background: #ffe89e;
-    color: inherit;
+    background: var(--mark-bg);
+    color: var(--mark-text);
     padding: 0 2px;
     border-radius: 2px;
   }
 
   .msg.flash { animation: flashHit 1.6s ease-out; }
   @keyframes flashHit {
-    0%   { box-shadow: 0 0 0 3px #ffe89e; }
+    0%   { box-shadow: 0 0 0 3px var(--focus-ring); }
     100% { box-shadow: 0 0 0 0 transparent; }
   }
 
@@ -701,7 +789,7 @@
   .source-summary {
     font-size: 11px;
     color: var(--muted);
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -746,8 +834,8 @@
     line-height: 1.7;
   }
   .setup-error {
-    background: #f1d4d4;
-    color: #a33;
+    background: var(--error-bg);
+    color: var(--error-fg);
     padding: 10px 14px;
     border-radius: 8px;
     margin-bottom: 16px;
@@ -787,7 +875,7 @@
     background: var(--code-bg);
     padding: 1px 5px;
     border-radius: 3px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     font-size: 0.9em;
     direction: ltr;
     unicode-bidi: embed;
@@ -812,10 +900,13 @@
     border-radius: 8px;
     padding: 6px 10px;
     font-size: 12px;
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
     outline: none;
   }
-  .setup-row input:focus { border-color: #b6d4af; }
+  .setup-row input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
   .setup-btn {
     border: 1px solid var(--border-strong);
     background: var(--panel);
@@ -829,11 +920,11 @@
   }
   .setup-btn:hover { background: var(--hover); }
   .setup-btn.primary {
-    background: var(--active);
-    color: var(--accent);
-    border-color: #b6d4af;
+    background: var(--accent);
+    color: #ffffff;
+    border-color: var(--accent);
   }
-  .setup-btn.primary:hover { background: #cee5c8; }
+  .setup-btn.primary:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
   .setup-btn:disabled {
     opacity: 0.55;
     cursor: progress;
@@ -843,7 +934,7 @@
     color: var(--muted);
     flex: 1;
   }
-  .setup-hint.warn { color: #a33; }
+  .setup-hint.warn { color: var(--error-fg); }
   .setup-privacy {
     margin: 14px 0 0;
     text-align: center;
@@ -889,7 +980,7 @@
   .export-count {
     font-size: 11px;
     color: var(--muted);
-    font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+    font-family: var(--font-mono);
   }
   .export-bar .latest-btn.active { cursor: pointer; }
   #messages.export-mode .msg { position: relative; }
@@ -1031,6 +1122,7 @@
     <div class="sidebar-header">
       <span class="sidebar-title">שיחות</span>
       <div class="header-actions">
+        <button id="theme-btn" class="ghost-btn theme-btn" type="button" title="החלפת מצב תצוגה"></button>
         <button id="group-btn" class="latest-btn" type="button" title="קיבוץ לפי פרויקט" aria-pressed="true">קיבוץ</button>
         <button id="collapse-all-btn" class="ghost-btn" type="button" title="כווץ את כל הקבוצות" hidden>כווץ הכל</button>
         <button id="latest-btn" class="latest-btn" type="button" title="חזרה למעקב אחרי השיחה החדשה ביותר" hidden>חזור לחדשה ביותר</button>
@@ -1054,6 +1146,45 @@
   <span>@ 2026</span>
 </div>
 <script>
+  // ---------- theme (light / dark / auto) ----------
+  (function initTheme() {
+    const KEY = "rtl-viewer:theme";
+    const order = ["light", "dark", "auto"];
+    const labels = { light: { icon: "☀", text: "בהיר" }, dark: { icon: "☾", text: "כהה" }, auto: { icon: "◐", text: "אוטו" } };
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+
+    function resolve(mode) {
+      if (mode === "auto") return mq.matches ? "dark" : "light";
+      return mode;
+    }
+    function apply(mode) {
+      document.documentElement.setAttribute("data-theme", resolve(mode));
+      const btn = document.getElementById("theme-btn");
+      if (btn) {
+        const l = labels[mode];
+        btn.innerHTML = `<span class="theme-icon" aria-hidden="true">${l.icon}</span><span>${l.text}</span>`;
+        btn.setAttribute("aria-label", `מצב תצוגה: ${l.text}. לחץ להחלפה.`);
+      }
+    }
+    function read() {
+      const v = localStorage.getItem(KEY);
+      return order.includes(v) ? v : "auto";
+    }
+    function cycle() {
+      const cur = read();
+      const next = order[(order.indexOf(cur) + 1) % order.length];
+      localStorage.setItem(KEY, next);
+      apply(next);
+    }
+    // Apply ASAP so the page doesn't flash light before going dark.
+    apply(read());
+    document.addEventListener("DOMContentLoaded", () => {
+      apply(read());
+      document.getElementById("theme-btn")?.addEventListener("click", cycle);
+    });
+    mq.addEventListener("change", () => { if (read() === "auto") apply("auto"); });
+  })();
+
   marked.setOptions({ breaks: true, gfm: true });
 
   function escapeHtml(s) {
@@ -1958,10 +2089,10 @@
 
   // Minimal CSS for the standalone export — message styling only, no app chrome.
   const EXPORT_STYLES = `
-:root{--bg:#f6f6f4;--panel:#fff;--panel-2:#fbfaf6;--user-bg:#e8f0fb;--border:#e8e8e3;--border-strong:#d8d6cf;--text:#1f1f1c;--muted:#8a8a85;--code-bg:#f1efe9;--accent:#2a662a;}
+:root{--bg:#fafafa;--panel:#fff;--panel-2:#f4f4f5;--user-bg:#eef2ff;--border:#e4e4e7;--border-strong:#d4d4d8;--text:#18181b;--muted:#71717a;--code-bg:#f4f4f5;--accent:#6366f1;--link:#4f46e5;}
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
-body{font-family:"Segoe UI","Heebo","Arial Hebrew",-apple-system,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.65;padding:24px;}
+body{font-family:"Geist","Heebo","Segoe UI",-apple-system,system-ui,sans-serif;background:var(--bg);color:var(--text);font-size:15px;line-height:1.65;padding:24px;}
 .exported-title{font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;color:var(--muted);direction:ltr;margin:0 0 14px;}
 .msg{margin:0 0 16px;padding:18px 22px;border-radius:12px;word-wrap:break-word;overflow-wrap:anywhere;}
 .msg.user{background:var(--user-bg);}
@@ -1988,8 +2119,8 @@ body{font-family:"Segoe UI","Heebo","Arial Hebrew",-apple-system,sans-serif;back
 .diff-side{flex:1 1 50%;min-width:0;display:flex;padding:0 6px;min-height:1.5em;white-space:pre;}
 .diff-side.diff-left{border-inline-end:1px solid var(--border);}
 .diff-side.diff-ctx{color:var(--muted);}
-.diff-side.diff-del{background:#f2cdcd;color:#5a1717;}
-.diff-side.diff-add{background:#d4edcd;color:#1e3a1e;}
+.diff-side.diff-del{background:#fee2e2;color:#7f1d1d;}
+.diff-side.diff-add{background:#dcfce7;color:#14532d;}
 .diff-side.diff-empty{background-image:repeating-linear-gradient(-45deg,transparent 0,transparent 5px,rgba(0,0,0,.05) 5px,rgba(0,0,0,.05) 6px);}
 .diff-mark{flex-shrink:0;width:14px;user-select:none;text-align:center;}
 .diff-text{white-space:pre;flex:1;min-width:0;}
@@ -2014,11 +2145,11 @@ body{font-family:"Segoe UI","Heebo","Arial Hebrew",-apple-system,sans-serif;back
 .body h1{font-size:1.35em;}.body h2{font-size:1.18em;}.body h3{font-size:1.05em;}
 .body ul,.body ol{padding-inline-start:26px;margin:.4em 0;}
 .body li{margin:.2em 0;}
-.body blockquote{border-inline-start:3px solid #d0cec7;margin:.5em 0;padding:.1em 12px;color:#555;}
+.body blockquote{border-inline-start:3px solid var(--border-strong);margin:.5em 0;padding:.1em 12px;color:var(--muted);}
 .body pre{background:var(--code-bg);padding:10px 12px;border-radius:6px;overflow-x:auto;direction:ltr;text-align:left;unicode-bidi:embed;font-size:.88em;line-height:1.5;}
 .body code{background:var(--code-bg);padding:1px 6px;border-radius:3px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:.9em;direction:ltr;unicode-bidi:embed;}
 .body pre code{background:none;padding:0;font-size:1em;}
-.body a{color:#1a5fb4;}
+.body a{color:var(--link);}
 .body table{border-collapse:collapse;margin:.5em 0;}
 .body th,.body td{border:1px solid var(--border);padding:4px 8px;text-align:start;}
 `.trim();
