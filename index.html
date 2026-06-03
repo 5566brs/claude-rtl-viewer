@@ -893,29 +893,60 @@
     cursor: pointer;
     font-family: inherit;
     box-shadow: 0 6px 16px rgba(0, 0, 0, 0.10), 0 1px 2px rgba(0, 0, 0, 0.06);
+    /* Transform / background / color animate on hover & press; opacity & scale
+       are also animated by the .fab-entering keyframe when a FAB pops in. */
     transition:
-      opacity 200ms ease,
-      transform 200ms ease,
-      background 140ms ease,
-      border-color 140ms ease,
-      color 140ms ease;
+      transform 180ms cubic-bezier(0.16, 1, 0.3, 1),
+      background 160ms ease,
+      border-color 160ms ease,
+      color 160ms ease,
+      box-shadow 160ms ease;
   }
-  .fab-btn svg { width: 18px; height: 18px; display: block; }
+  .fab-btn svg {
+    width: 18px;
+    height: 18px;
+    display: block;
+    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
   .fab-btn:hover {
-    background: var(--hover);
+    background: var(--active);
     border-color: var(--accent);
     color: var(--accent);
+    transform: translateY(-1px) scale(1.06);
+    box-shadow: 0 8px 22px rgba(99, 102, 241, 0.22), 0 1px 2px rgba(0, 0, 0, 0.05);
+  }
+  /* Nudge the arrow icons a tick in their travel direction on hover so the
+     intent reads instantly — up arrow lifts, down arrow dips. */
+  #fab-top:hover svg    { transform: translateY(-2px); }
+  #fab-bottom:hover svg { transform: translateY(2px); }
+  .fab-btn:active {
+    transform: scale(0.92);
+    transition-duration: 80ms;
+    box-shadow: 0 3px 8px rgba(0, 0, 0, 0.10), 0 1px 2px rgba(0, 0, 0, 0.06);
   }
   .fab-btn:focus-visible {
     outline: none;
     box-shadow: 0 0 0 3px var(--focus-ring), 0 6px 16px rgba(0, 0, 0, 0.10);
     border-color: var(--accent);
   }
+  /* Pop-in: scale + lift from below, with a soft overshoot. JS adds the class
+     after toggling `hidden` off and removes it 320ms later — that's enough to
+     play the full curve including the bounce settle, and short enough that
+     re-triggers stay responsive when the FAB blinks across the threshold. */
+  .fab-btn.fab-entering {
+    animation: fab-pop-in 280ms cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  }
+  @keyframes fab-pop-in {
+    0%   { opacity: 0; transform: scale(0.55) translateY(8px); }
+    60%  { opacity: 1; transform: scale(1.08) translateY(0); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+  }
   /* Hidden FABs collapse completely (via the global [hidden] { display: none })
      so the remaining buttons re-stack tightly without leaving an empty gap
-     where the hidden one used to be. Show/hide is instant — the value the
-     user gets from "no empty slot" outweighs a fade, and the buttons appear
-     during slow scroll so they're not jarring. */
+     where the hidden one used to be. Show is animated by .fab-entering; hide
+     is instant on purpose — collapsing the slot smoothly would either leave
+     a hole during the fade or shrink the button into nothing, both of which
+     look worse than a clean snap-out. */
   @media (max-width: 880px) {
     /* In stacked layout the sidebar isn't fixed anymore, so the inside-of-main
        anchor doesn't make sense — pin the FAB stack to the inline-end edge of
@@ -927,7 +958,12 @@
     }
   }
   @media (prefers-reduced-motion: reduce) {
-    .fab-btn { transition: opacity 80ms linear; }
+    .fab-btn,
+    .fab-btn svg { transition: background 80ms linear, color 80ms linear; }
+    .fab-btn.fab-entering { animation: none; }
+    .fab-btn:hover,
+    .fab-btn:active { transform: none; }
+    #fab-top:hover svg, #fab-bottom:hover svg { transform: none; }
   }
 
   #page-credit {
@@ -3601,6 +3637,54 @@ ${titleEl}${wrap.outerHTML}
   const mobileMq = window.matchMedia("(max-width: 880px)");
   const SCROLL_THRESHOLD = 240; // ignore tiny scrolls so the FABs don't flicker
 
+  // rAF-driven smooth scroll. Native `window.scrollTo({behavior:"smooth"})`
+  // respects `prefers-reduced-motion: reduce` and snaps when that's set; the
+  // FABs are an explicit user action, so we always animate regardless. Any
+  // wheel/touch/key input from the user cancels the in-flight animation.
+  let scrollAnim = 0;
+  function smoothScrollTo(targetY, duration) {
+    const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    targetY = Math.max(0, Math.min(targetY, maxY));
+    const startY = window.scrollY;
+    const distance = targetY - startY;
+    if (Math.abs(distance) < 4) { window.scrollTo(0, targetY); return; }
+    // Scale duration with distance so a long jump feels deliberate but
+    // a short one stays snappy. Cap so we never feel slow.
+    const dur = duration ?? Math.min(900, 280 + Math.sqrt(Math.abs(distance)) * 12);
+    // ease-out-cubic — fast start, gentle landing.
+    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    const startTime = performance.now();
+    scrollAnim++;
+    const myAnim = scrollAnim;
+    const cancel = () => { if (scrollAnim === myAnim) scrollAnim++; };
+    window.addEventListener("wheel", cancel, { once: true, passive: true });
+    window.addEventListener("touchstart", cancel, { once: true, passive: true });
+    window.addEventListener("keydown", cancel, { once: true });
+    function step(now) {
+      if (scrollAnim !== myAnim) return;
+      const t = Math.min(1, (now - startTime) / dur);
+      window.scrollTo(0, startY + distance * ease(t));
+      if (t < 1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+
+  // Animated show/hide: pop-in when a FAB appears, snap-hide when it disappears
+  // so the remaining buttons re-stack tightly with no empty 38px slot.
+  function showFab(btn) {
+    if (!btn.hidden && !btn.classList.contains("fab-entering")) return;
+    btn.hidden = false;
+    btn.classList.remove("fab-entering");
+    void btn.offsetWidth; // force reflow so the animation restarts cleanly
+    btn.classList.add("fab-entering");
+    setTimeout(() => btn.classList.remove("fab-entering"), 320);
+  }
+  function hideFab(btn) {
+    btn.hidden = true;
+    btn.classList.remove("fab-entering");
+  }
+  function setFabHidden(btn, hide) { hide ? hideFab(btn) : showFab(btn); }
+
   function updateFabs() {
     const docHeight = document.documentElement.scrollHeight;
     const viewport = window.innerHeight;
@@ -3609,32 +3693,31 @@ ${titleEl}${wrap.outerHTML}
 
     // No scroll possible — nothing to do.
     if (max < SCROLL_THRESHOLD) {
-      fabTopBtn.hidden = true;
-      fabBottomBtn.hidden = true;
-      fabMenuBtn.hidden = true;
+      hideFab(fabTopBtn);
+      hideFab(fabBottomBtn);
+      hideFab(fabMenuBtn);
       return;
     }
 
     const fromTop = y;
     const fromBottom = max - y;
-    fabTopBtn.hidden = fromTop < SCROLL_THRESHOLD;
-    fabBottomBtn.hidden = fromBottom < SCROLL_THRESHOLD;
-
+    setFabHidden(fabTopBtn, fromTop < SCROLL_THRESHOLD);
+    setFabHidden(fabBottomBtn, fromBottom < SCROLL_THRESHOLD);
     // Mobile menu jump: only when the sidebar is stacked (mobile layout),
     // and only when we're in the upper half (so it doesn't overlap the other
     // FABs once the user is already at/near the sidebar).
-    fabMenuBtn.hidden = !mobileMq.matches || y > max * 0.55;
+    setFabHidden(fabMenuBtn, !mobileMq.matches || y > max * 0.55);
   }
 
-  fabTopBtn.addEventListener("click", () => {
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  });
+  fabTopBtn.addEventListener("click", () => smoothScrollTo(0));
   fabBottomBtn.addEventListener("click", () => {
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "smooth" });
+    smoothScrollTo(document.documentElement.scrollHeight);
   });
   fabMenuBtn.addEventListener("click", () => {
     const sb = document.querySelector(".sidebar");
-    if (sb) sb.scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!sb) return;
+    const rect = sb.getBoundingClientRect();
+    smoothScrollTo(rect.top + window.scrollY - 12);
   });
 
   window.addEventListener("scroll", updateFabs, { passive: true });
