@@ -2586,7 +2586,11 @@
   }
 
   function applyAppend(m) {
-    const stick = nearBottom();
+    // While the user is in the middle of a manual smooth scroll (from a FAB),
+    // suppress the auto-stick to the bottom. Without this, a new SSE chunk
+    // arriving mid-animation would snap the page back and visually cancel the
+    // user's scroll, making the FAB feel broken / "not smooth".
+    const stick = !window.__smoothScrollActive && nearBottom();
     currentMessages.push(m);
     const node = renderMessage(m);
     messagesEl.appendChild(node);
@@ -3638,33 +3642,60 @@ ${titleEl}${wrap.outerHTML}
   const SCROLL_THRESHOLD = 240; // ignore tiny scrolls so the FABs don't flicker
 
   // rAF-driven smooth scroll. Native `window.scrollTo({behavior:"smooth"})`
-  // respects `prefers-reduced-motion: reduce` and snaps when that's set; the
-  // FABs are an explicit user action, so we always animate regardless. Any
-  // wheel/touch/key input from the user cancels the in-flight animation.
+  // is fragile here for two reasons: it respects prefers-reduced-motion (so
+  // it snaps when that's set), and — more importantly — Chromium aborts the
+  // in-flight native smooth scroll the moment the document grows underneath
+  // it, which happens on every SSE append in the live session. Our own rAF
+  // loop captures startY once and recomputes the target every frame so the
+  // animation survives DOM mutation, including chasing the bottom as new
+  // messages land. The `window.__smoothScrollActive` flag keeps applyAppend
+  // from snapping back to the bottom while we're mid-animation; wheel /
+  // touch / keydown cancel both the loop and the flag so manual override
+  // always wins.
   let scrollAnim = 0;
+  window.__smoothScrollActive = false;
+  // targetY can be a number, or the sentinel string "end" for "the document's
+  // bottom right now" (re-evaluated every frame so a growing live session
+  // doesn't leave us short).
   function smoothScrollTo(targetY, duration) {
-    const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
-    targetY = Math.max(0, Math.min(targetY, maxY));
+    function resolveTarget() {
+      if (targetY === "end") {
+        return Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      }
+      const maxY = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      return Math.max(0, Math.min(targetY, maxY));
+    }
     const startY = window.scrollY;
-    const distance = targetY - startY;
-    if (Math.abs(distance) < 4) { window.scrollTo(0, targetY); return; }
-    // Scale duration with distance so a long jump feels deliberate but
-    // a short one stays snappy. Cap so we never feel slow.
-    const dur = duration ?? Math.min(900, 280 + Math.sqrt(Math.abs(distance)) * 12);
-    // ease-out-cubic — fast start, gentle landing.
-    const ease = (t) => 1 - Math.pow(1 - t, 3);
+    const initialTarget = resolveTarget();
+    const initialDistance = initialTarget - startY;
+    if (Math.abs(initialDistance) < 4) { window.scrollTo(0, initialTarget); return; }
+    // Scale duration with distance so a long jump feels deliberate but a
+    // short one stays snappy. Cap at 900ms so it never feels slow.
+    const dur = duration ?? Math.min(900, 280 + Math.sqrt(Math.abs(initialDistance)) * 12);
+    const ease = (t) => 1 - Math.pow(1 - t, 3); // ease-out-cubic
     const startTime = performance.now();
     scrollAnim++;
     const myAnim = scrollAnim;
-    const cancel = () => { if (scrollAnim === myAnim) scrollAnim++; };
-    window.addEventListener("wheel", cancel, { once: true, passive: true });
-    window.addEventListener("touchstart", cancel, { once: true, passive: true });
-    window.addEventListener("keydown", cancel, { once: true });
+    window.__smoothScrollActive = true;
+    const finish = () => {
+      if (scrollAnim === myAnim) {
+        scrollAnim++;
+        window.__smoothScrollActive = false;
+      }
+    };
+    window.addEventListener("wheel", finish, { once: true, passive: true });
+    window.addEventListener("touchstart", finish, { once: true, passive: true });
+    window.addEventListener("keydown", finish, { once: true });
     function step(now) {
       if (scrollAnim !== myAnim) return;
       const t = Math.min(1, (now - startTime) / dur);
+      // Re-resolve the target every frame so we chase the growing scroll-
+      // Height for "end", and clamp into the current valid range otherwise.
+      const currentTarget = resolveTarget();
+      const distance = currentTarget - startY;
       window.scrollTo(0, startY + distance * ease(t));
       if (t < 1) requestAnimationFrame(step);
+      else finish();
     }
     requestAnimationFrame(step);
   }
@@ -3710,9 +3741,7 @@ ${titleEl}${wrap.outerHTML}
   }
 
   fabTopBtn.addEventListener("click", () => smoothScrollTo(0));
-  fabBottomBtn.addEventListener("click", () => {
-    smoothScrollTo(document.documentElement.scrollHeight);
-  });
+  fabBottomBtn.addEventListener("click", () => smoothScrollTo("end"));
   fabMenuBtn.addEventListener("click", () => {
     const sb = document.querySelector(".sidebar");
     if (!sb) return;
