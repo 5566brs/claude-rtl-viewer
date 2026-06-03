@@ -911,14 +911,11 @@
     box-shadow: 0 0 0 3px var(--focus-ring), 0 6px 16px rgba(0, 0, 0, 0.10);
     border-color: var(--accent);
   }
-  /* Override the global [hidden] { display: none !important; } so the buttons
-     fade out smoothly instead of popping. */
-  .fab-btn[hidden] {
-    display: inline-flex !important;
-    opacity: 0;
-    pointer-events: none;
-    transform: translateY(8px);
-  }
+  /* Hidden FABs collapse completely (via the global [hidden] { display: none })
+     so the remaining buttons re-stack tightly without leaving an empty gap
+     where the hidden one used to be. Show/hide is instant — the value the
+     user gets from "no empty slot" outweighs a fade, and the buttons appear
+     during slow scroll so they're not jarring. */
   @media (max-width: 880px) {
     /* In stacked layout the sidebar isn't fixed anymore, so the inside-of-main
        anchor doesn't make sense — pin the FAB stack to the inline-end edge of
@@ -2519,8 +2516,6 @@
     if (sessionTitleEl) {
       sessionTitleEl.textContent = title;
       sessionTitleEl.hidden = !title;
-      if (title) sessionTitleEl.setAttribute("data-tooltip", title);
-      else sessionTitleEl.removeAttribute("data-tooltip");
     }
     if (copyPathBtn) copyPathBtn.hidden = !activeFile;
   }
@@ -2921,14 +2916,21 @@ body{font-family:"Geist","Heebo","Segoe UI",-apple-system,system-ui,sans-serif;b
     });
     if (!wrap.children.length) return;
     const fileLabel = activeFile ? activeFile.split(/[\\\/]/).pop() : "";
-    const title = exportFilenameBase();
+    const fileBase = exportFilenameBase();
+    // The browser-tab title for the exported file is the session's descriptive
+    // title when one is available, suffixed with " | Claude RTL viewer" so the
+    // exported tab is identifiable amid a row of open transcripts. The visible
+    // monospace title at the top of the document stays the UUID filename — it
+    // is the identifier that links the export back to the original .jsonl.
+    const sessionMeta = activeFile ? sessionsList.find(s => s.path === activeFile) : null;
+    const docTitle = (sessionMeta?.title || fileBase) + " | Claude RTL viewer";
     const titleEl = fileLabel ? `<div class="exported-title">${escapeHtml(fileLabel)}</div>\n` : "";
     const html = `<!doctype html>
 <html lang="he">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${escapeHtml(title)}</title>
+<title>${escapeHtml(docTitle)}</title>
 <style>
 ${EXPORT_STYLES}
 </style>
@@ -2939,7 +2941,7 @@ ${titleEl}${wrap.outerHTML}
 </html>
 `;
     const blob = new Blob([html], { type: "text/html;charset=utf-8" });
-    triggerDownload(blob, title + ".html");
+    triggerDownload(blob, fileBase + ".html");
     exitExportMode();
   }
 
