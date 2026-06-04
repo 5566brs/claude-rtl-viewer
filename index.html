@@ -1120,27 +1120,50 @@
     flex: 1;
   }
 
-  /* Setup / welcome screen */
+  /* Setup / welcome screen — hero treatment. The brand-stack lifts the app
+     icon above the title as a centered mark, the divider gives a small breath
+     between brand and intro, and the whole card uses centered, generous
+     spacing so the first screen reads as a welcome rather than a settings
+     form. The hero scope is the .setup card only; nothing else inherits. */
   .setup {
     max-width: 640px;
-    margin: 60px auto;
-    padding: 24px 26px 22px;
+    margin: 72px auto;
+    padding: 32px 28px 26px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 14px;
   }
+  .brand-stack { display: flex; justify-content: center; margin: 4px 0 22px; }
+  /* Hero-sized variant of .app-icon-mark (the top-chrome icon stays 40px). */
+  .brand-stack .app-icon-mark {
+    width: 76px;
+    height: 76px;
+    border-radius: 16px;
+    box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 22%, transparent),
+                0 1px 3px rgba(0, 0, 0, 0.05);
+  }
+  .brand-divider {
+    width: 32px;
+    height: 1px;
+    background: var(--border-strong);
+    margin: 14px auto 16px;
+    opacity: 0.6;
+  }
   .setup-title {
-    font-size: 18px;
+    font-size: 22px;
     font-weight: 600;
-    margin: 0 0 10px;
+    margin: 0 0 8px;
     direction: ltr;
-    text-align: start;
+    text-align: center;
+    letter-spacing: -0.1px;
   }
   .setup-intro {
     color: var(--muted);
-    margin: 0 0 18px;
-    font-size: 13px;
+    margin: 0 auto 26px;
+    font-size: 13.5px;
     line-height: 1.7;
+    text-align: center;
+    max-width: 480px;
   }
   .setup-error {
     background: var(--error-bg);
@@ -1154,7 +1177,7 @@
   .setup-options {
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 12px;
+    gap: 14px;
   }
   @media (max-width: 560px) {
     .setup-options { grid-template-columns: 1fr; }
@@ -1162,7 +1185,7 @@
   .setup-option {
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 14px 16px;
+    padding: 16px 18px;
     background: var(--panel-2);
     display: flex;
     flex-direction: column;
@@ -1254,7 +1277,7 @@
   }
   .setup-hint.warn { color: var(--error-fg); }
   .setup-privacy {
-    margin: 14px 0 0;
+    margin: 22px 0 0;
     text-align: center;
     font-size: 11px;
     color: var(--muted);
@@ -1413,7 +1436,16 @@
   </svg>
 </div>
 <div id="setup" class="setup" hidden>
+  <div class="brand-stack" aria-hidden="true">
+    <span class="app-icon-mark">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+        <path fill="#ffffff" d="M27 6H14a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10l3 3v-3a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2z"/>
+        <path fill="#c7d2fe" d="M5 17h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/>
+      </svg>
+    </span>
+  </div>
   <h1 class="setup-title">Claude RTL Viewer</h1>
+  <div class="brand-divider" aria-hidden="true"></div>
   <p class="setup-intro" data-i18n-html="setup_intro_html"></p>
   <div id="setup-error" class="setup-error" hidden></div>
 
