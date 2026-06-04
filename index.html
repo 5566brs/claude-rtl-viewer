@@ -238,6 +238,44 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
   .top-chrome .icon-btn:hover { background: var(--hover); }
+  .app-icon-mark {
+    width: 30px;
+    height: 30px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    pointer-events: none;
+  }
+  .app-icon-mark svg { width: 22px; height: 22px; display: block; }
+  /* Watermark — only visible at narrow breakpoint (see media query). Large
+     faded icon that sits behind content where the chrome corner used to be,
+     so the app's identity stays visible without colliding with any button. */
+  .app-watermark {
+    position: fixed;
+    top: -18px;
+    inset-inline-start: -18px;
+    width: 150px;
+    height: 150px;
+    color: var(--accent);
+    opacity: 0.1;
+    pointer-events: none;
+    /* Negative z-index so content paints on top — body has no stacking context
+       of its own, so the watermark sits in the root stacking context behind
+       all in-flow content but above the body background. */
+    z-index: -1;
+    display: none;
+  }
+  .app-watermark svg { width: 100%; height: 100%; display: block; }
+  :root[data-theme="dark"] .app-watermark { opacity: 0.13; }
+  /* Below 1440px the corner doesn't have room for [theme][lang][icon] without
+     overlapping the sidebar header (in HE) or the title area (in EN). Hide
+     the floating chrome — JS docks theme+lang into the sidebar header — and
+     bring up the background watermark as a quiet brand presence. */
+  @media (max-width: 1440px) {
+    .top-chrome { display: none; }
+    .app-watermark { display: block; }
+  }
 
   .msg {
     margin: 0 0 16px;
@@ -574,6 +612,10 @@
     background: var(--panel);
   }
   .header-actions { display: flex; gap: 6px; }
+  /* Docked theme/lang join the sidebar header at narrow widths — normalize
+     their size to match the existing .is-sm buttons so the row stays even. */
+  .sidebar-header .header-actions .icon-btn { --icon-size: 26px; }
+  .sidebar-header .header-actions .icon-btn svg { width: 14px; height: 14px; }
   .sidebar-title {
     font-size: 12px;
     font-weight: 600;
@@ -1301,6 +1343,7 @@
 
     #status,
     .top-chrome,
+    .app-watermark,
     .sidebar,
     .sidebar-spacer,
     #page-credit,
@@ -1343,6 +1386,18 @@
 <div class="top-chrome">
   <button id="theme-btn" class="icon-btn" type="button"></button>
   <button id="lang-btn" class="icon-btn" type="button"></button>
+  <span class="app-icon-mark" aria-hidden="true">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M27 6H14a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10l3 3v-3a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2z"/>
+      <path d="M5 17h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/>
+    </svg>
+  </span>
+</div>
+<div class="app-watermark" aria-hidden="true">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M27 6H14a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10l3 3v-3a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2z"/>
+    <path d="M5 17h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/>
+  </svg>
 </div>
 <div id="setup" class="setup" hidden>
   <h1 class="setup-title">Claude RTL Viewer</h1>
@@ -3409,6 +3464,41 @@ ${titleEl}${wrap.outerHTML}
     return String(url ?? "").trim().replace(/\/+$/, "") || DEFAULT_SERVER_URL;
   }
 
+  // ---------- responsive chrome docking ----------
+  // Above 1440px the corner has enough room for [theme][lang][icon]; below that,
+  // the floating chrome would overlap the sidebar header (HE) or the title area
+  // (EN), so theme+lang are docked into the sidebar header alongside the existing
+  // group/collapse/latest buttons. The app icon doesn't follow them — it would
+  // overcrowd the row — and instead surfaces as a large faded watermark via CSS.
+  // While the setup screen is shown the layout (and the sidebar with it) is
+  // hidden, so the corner is free of collisions — fall back to the floating
+  // chrome in that mode so theme/lang remain reachable.
+  const _dockWideMq = window.matchMedia("(min-width: 1441px)");
+  function dockChrome() {
+    const chromeWrap = document.querySelector(".top-chrome");
+    const themeBtn = document.getElementById("theme-btn");
+    const langBtn = document.getElementById("lang-btn");
+    const sidebarActions = document.querySelector(".sidebar-header .header-actions");
+    if (!chromeWrap || !themeBtn || !langBtn || !sidebarActions) return;
+    const iconMark = chromeWrap.querySelector(".app-icon-mark");
+    const setupNode = document.getElementById("setup");
+    const setupVisible = setupNode && !setupNode.hidden;
+    const useCorner = _dockWideMq.matches || setupVisible;
+    if (useCorner) {
+      chromeWrap.insertBefore(langBtn, iconMark);
+      chromeWrap.insertBefore(themeBtn, langBtn);
+      // Override the media-query `display: none` only when we're narrow + setup;
+      // at wide width the CSS already shows the corner.
+      chromeWrap.style.display = (!_dockWideMq.matches && setupVisible) ? "flex" : "";
+    } else {
+      sidebarActions.appendChild(themeBtn);
+      sidebarActions.appendChild(langBtn);
+      chromeWrap.style.display = "";
+    }
+  }
+  dockChrome();
+  _dockWideMq.addEventListener("change", dockChrome);
+
   function showSetup({ error = "", folderHint = "", folderWarn = false } = {}) {
     layoutEl.hidden = true;
     setupEl.hidden = false;
@@ -3417,11 +3507,13 @@ ${titleEl}${wrap.outerHTML}
     else { setupErrorEl.hidden = true; setupErrorEl.textContent = ""; }
     setupFolderHintEl.textContent = folderHint;
     setupFolderHintEl.classList.toggle("warn", folderWarn);
+    dockChrome();
   }
 
   function hideSetup() {
     setupEl.hidden = true;
     layoutEl.hidden = false;
+    dockChrome();
   }
 
   function updateSourceSummary(label) {
