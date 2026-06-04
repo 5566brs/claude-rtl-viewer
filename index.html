@@ -1867,8 +1867,10 @@
       // measure once visible-but-transparent so width is correct
       const tw = tip.offsetWidth;
       const th = tip.offsetHeight;
-      const vw = window.innerWidth;
-      const vh = window.innerHeight;
+      // clientWidth/Height exclude the scrollbar gutter, so a tooltip clamped to
+      // the right edge clears the vertical scrollbar instead of slipping under it.
+      const vw = document.documentElement.clientWidth;
+      const vh = document.documentElement.clientHeight;
       const gap = 8;
       const pad = 6;
 
