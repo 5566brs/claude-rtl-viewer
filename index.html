@@ -238,25 +238,38 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
   }
   .top-chrome .icon-btn:hover { background: var(--hover); }
+  /* Foreground app icon — sized up as the brand mark of the corner. Matches
+     the favicon's solid look (indigo rounded square + light bubbles) instead
+     of a stroke-only outline, so the in-app icon and the browser-tab favicon
+     read as the same identity. Border + radius follow the regular .icon-btn
+     style so it sits cleanly alongside the theme/lang buttons. The SVG keeps
+     its built-in ~3-unit padding (bubbles live inside x=3..29, y=6..29 of a
+     32-unit viewBox) — that's the breathing room around the glyph, so the
+     svg fills the box and we don't add extra padding on the span. */
   .app-icon-mark {
-    width: 30px;
-    height: 30px;
+    width: 40px;
+    height: 40px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    color: var(--accent);
+    background: var(--accent);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
     pointer-events: none;
+    overflow: hidden;
   }
-  .app-icon-mark svg { width: 22px; height: 22px; display: block; }
+  .app-icon-mark svg { width: 100%; height: 100%; display: block; }
   /* Watermark — only visible at narrow breakpoint (see media query). Large
-     faded icon that sits behind content where the chrome corner used to be,
-     so the app's identity stays visible without colliding with any button. */
+     faded icon centered on the viewport so the app's identity stays present
+     without colliding with any button. */
   .app-watermark {
     position: fixed;
-    top: -18px;
-    inset-inline-start: -18px;
-    width: 150px;
-    height: 150px;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 220px;
+    height: 220px;
     color: var(--accent);
     opacity: 0.1;
     pointer-events: none;
@@ -1384,14 +1397,14 @@
 <body>
 <span id="status"></span>
 <div class="top-chrome">
-  <button id="theme-btn" class="icon-btn" type="button"></button>
-  <button id="lang-btn" class="icon-btn" type="button"></button>
   <span class="app-icon-mark" aria-hidden="true">
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M27 6H14a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10l3 3v-3a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2z"/>
-      <path d="M5 17h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/>
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
+      <path fill="#ffffff" d="M27 6H14a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10l3 3v-3a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2z"/>
+      <path fill="#c7d2fe" d="M5 17h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z"/>
     </svg>
   </span>
+  <button id="theme-btn" class="icon-btn" type="button"></button>
+  <button id="lang-btn" class="icon-btn" type="button"></button>
 </div>
 <div class="app-watermark" aria-hidden="true">
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">
@@ -3480,13 +3493,16 @@ ${titleEl}${wrap.outerHTML}
     const langBtn = document.getElementById("lang-btn");
     const sidebarActions = document.querySelector(".sidebar-header .header-actions");
     if (!chromeWrap || !themeBtn || !langBtn || !sidebarActions) return;
-    const iconMark = chromeWrap.querySelector(".app-icon-mark");
     const setupNode = document.getElementById("setup");
     const setupVisible = setupNode && !setupNode.hidden;
     const useCorner = _dockWideMq.matches || setupVisible;
     if (useCorner) {
-      chromeWrap.insertBefore(langBtn, iconMark);
-      chromeWrap.insertBefore(themeBtn, langBtn);
+      // iconMark stays first in DOM (set in HTML); theme+lang follow it. Order
+      // is [iconMark][theme][lang] so the icon reads as the brand mark in both
+      // directions — flex with the document's direction puts the first child
+      // at the visual start (right in HE, left in EN).
+      chromeWrap.appendChild(themeBtn);
+      chromeWrap.appendChild(langBtn);
       // Override the media-query `display: none` only when we're narrow + setup;
       // at wide width the CSS already shows the corner.
       chromeWrap.style.display = (!_dockWideMq.matches && setupVisible) ? "flex" : "";
