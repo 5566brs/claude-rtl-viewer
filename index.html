@@ -5,6 +5,7 @@
 <title>Claude RTL Viewer</title>
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <meta name="color-scheme" content="light dark" />
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%236366f1'/><path fill='%23ffffff' d='M27 6H14a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h10l3 3v-3a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2z'/><path fill='%23c7d2fe' d='M5 17h13a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2H8l-3 3v-3a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2z'/></svg>" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&family=Heebo:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -1408,7 +1409,7 @@
     </div>
     <div class="source-bar">
       <span id="source-summary" class="source-summary"></span>
-      <button id="change-source-btn" class="icon-btn is-sm" type="button" data-icon="arrowRightLeft" data-i18n-tt="tt_change_source"></button>
+      <button id="change-source-btn" class="icon-btn is-sm" type="button" data-icon="folderCog" data-i18n-tt="tt_change_source"></button>
     </div>
     <div class="sidebar-search">
       <input id="search-input" type="search" data-i18n-ph="search_ph" />
@@ -1450,7 +1451,7 @@
     // sidebar / toolbar
     folderTree:    _ico('<path d="M20 10a1 1 0 0 0 1-1V6a1 1 0 0 0-1-1h-2.5a1 1 0 0 1-.8-.4l-.9-1.2A1 1 0 0 0 15 3h-2a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1z"/><path d="M20 21a1 1 0 0 0 1-1v-3a1 1 0 0 0-1-1h-2.9a1 1 0 0 1-.88-.55l-.42-.85a1 1 0 0 0-.92-.6H13a1 1 0 0 0-1 1v5a1 1 0 0 0 1 1z"/><path d="M3 5a2 2 0 0 0 2 2h3"/><path d="M3 3v13a2 2 0 0 0 2 2h3"/>'),
     foldVertical:  _ico('<path d="M12 22v-6"/><path d="M12 8V2"/><path d="M4 12H2"/><path d="M10 12H8"/><path d="M16 12h-2"/><path d="M22 12h-2"/><path d="m15 19-3-3-3 3"/><path d="m15 5-3 3-3-3"/>'),
-    arrowRightLeft:_ico('<path d="m16 3 4 4-4 4"/><path d="M20 7H4"/><path d="m8 21-4-4 4-4"/><path d="M4 17h16"/>'),
+    folderCog:     _ico('<path d="M10 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v3"/><circle cx="18" cy="18" r="3"/><path d="M18 14v1"/><path d="M18 21v1"/><path d="M22 18h-1"/><path d="M15 18h-1"/><path d="m21 15-.88.88"/><path d="M15.88 20.12 15 21"/><path d="m21 21-.88-.88"/><path d="M15.88 15.88 15 15"/>'),
 
     // export
     braces:      _ico('<path d="M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1"/><path d="M16 21h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1"/>'),
@@ -2778,9 +2779,32 @@
     exportHtmlBtn.disabled = !has || exportMode;
   }
 
+  // Strip Windows-invalid filename chars + control chars, then collapse
+  // runs of whitespace/separators into single hyphens. Hebrew letters pass
+  // through unchanged (Windows/macOS handle Unicode filenames fine).
+  function slugifyForFilename(s) {
+    if (!s) return "";
+    const invalid = new RegExp("[\\u0000-\\u001f<>:\"/\\\\|?*]+", "g");
+    return s.toString()
+      .replace(invalid, " ")
+      .replace(/[\s_]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60)
+      .toLowerCase();
+  }
+
   function exportFilenameBase() {
     if (!activeFile) return "session";
-    return (activeFile.split(/[\\\/]/).pop() || "session").replace(/\.jsonl$/i, "");
+    const uuidName = (activeFile.split(/[\\\/]/).pop() || "").replace(/\.jsonl$/i, "");
+    const meta = sessionsList.find(s => s.path === activeFile);
+    const date = new Date(meta?.mtime || Date.now()).toISOString().slice(0, 10);
+    const titleSource = meta?.title
+      || meta?.preview
+      || (meta?.project ? projectLabelParts(meta.project).leaf : "");
+    const slug = slugifyForFilename(titleSource) || "session";
+    const uuid8 = uuidName.slice(0, 8) || "noid";
+    return `claude-${date}-${slug}-${uuid8}`;
   }
 
   function triggerDownload(blob, filename) {
