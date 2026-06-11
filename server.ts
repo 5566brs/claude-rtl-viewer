@@ -42,6 +42,9 @@ function parseLine(line: string): Msg[] {
   let obj: any;
   try { obj = JSON.parse(line); } catch { return []; }
   if (obj.isSidechain) return [];
+  // Skip meta entries (isMeta: true) — system-injected turns such as skill
+  // expansions, which can be hundreds of KB and are hidden by official UIs.
+  if (obj.isMeta) return [];
 
   if (obj.type === "user" && obj.message?.content != null) {
     const c = obj.message.content;
