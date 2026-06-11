@@ -2,6 +2,7 @@ import { readdir, stat } from "node:fs/promises";
 import { watch } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const PROJECTS_DIR = process.env.CLAUDE_PROJECTS_DIR ?? join(homedir(), ".claude", "projects");
 const PORT = Number(process.env.PORT ?? 5577);
@@ -348,20 +349,67 @@ async function handleChange(relPath: string) {
   }
 }
 
-// ---------- send-to-session (headless `claude -p --resume`) ----------
-// Spawns the locally-installed Claude Code CLI, so it uses whatever auth the
-// user already has (subscription OAuth or API key) — no key is handled here.
-// The reply is written by the CLI to the same .jsonl (resume keeps the session
-// ID), so the existing watcher → SSE pipeline surfaces it with no extra work.
+// ---------- live agents (persistent Claude Code process per conversation) ----------
+// Architecture mirrors the official surfaces (VS Code extension, Claude in
+// Chrome, Remote Control): exactly ONE long-lived process owns the session
+// while it's being driven from the viewer, and the web UI is a frontend that
+// feeds input into that process. The Agent SDK spawns the Claude Code CLI
+// locally, so auth is whatever the user's CLI already has (subscription OAuth
+// or API key) — the server never touches credentials.
+//
+// Division of labor:
+//  - The live process is the channel for INPUT (user messages), PERMISSION
+//    prompts (canUseTool → browser approve/deny), and live token STREAMING
+//    (partial_assistant events → `stream` SSE, rendered as a ghost bubble).
+//  - The DISK pipeline (watcher → reset/append) stays canonical for content:
+//    history, sessions written by other tools (terminal / VS Code), search,
+//    and the durable final form of every streamed message.
 
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const runningSends = new Set<string>();
+const AGENT_IDLE_REAP_MS = 30 * 60 * 1000;  // close idle processes after 30 min
+const PERM_TIMEOUT_MS = 10 * 60 * 1000;     // auto-deny unanswered prompts
 
-function broadcastSendState(file: string, state: "running" | "done" | "error", error?: string) {
-  for (const sub of subs) send(sub.controller, "send", { file, state, error: error ?? null });
+interface PendingPerm {
+  id: string;
+  tool: string;
+  input: unknown;
+  resolve: (r: unknown) => void;
+  done: boolean;
 }
 
-// The CLI must run from the session's original working directory so --resume
+interface Agent {
+  file: string;
+  sessionId: string;
+  cwd: string;
+  q: any;                       // SDK Query (AsyncGenerator + control methods)
+  queue: any[];                 // pending SDKUserMessages
+  wake: (() => void) | null;    // resumes the input generator
+  state: "working" | "idle";
+  closed: boolean;
+  lastActivity: number;
+  lastError: string | null;
+  stderrTail: string;
+  permSeq: number;
+  pendingPerms: Map<string, PendingPerm>;
+}
+
+const agents = new Map<string, Agent>();
+const startingAgents = new Map<string, Promise<Agent>>();
+
+function broadcastAgent(file: string, state: string, error?: string | null) {
+  for (const sub of subs) send(sub.controller, "agent", { file, state, error: error ?? null });
+}
+function broadcastPerm(file: string, payload: Record<string, unknown>) {
+  for (const sub of subs) send(sub.controller, "perm", { file, ...payload });
+}
+// Stream deltas are chatty — only push them to subs actually watching the file.
+function broadcastStream(file: string, payload: Record<string, unknown>) {
+  for (const sub of subs) {
+    if (sub.current === file) send(sub.controller, "stream", { file, ...payload });
+  }
+}
+
+// The CLI must run from the session's original working directory so resume
 // finds the session under the matching project folder.
 async function readSessionCwd(path: string): Promise<string | null> {
   try {
@@ -378,62 +426,229 @@ async function readSessionCwd(path: string): Promise<string | null> {
   return null;
 }
 
-async function handleSend(req: Request): Promise<Response> {
-  let body: any;
-  try { body = await req.json(); } catch {
-    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+// Input side of the live process: an async generator the SDK consumes. New
+// user messages are pushed into `queue`; `wake` un-parks the generator.
+// Setting `closed` and waking ends the generator, which closes the CLI's
+// stdin and shuts the process down gracefully.
+async function* agentInput(agent: Agent) {
+  while (!agent.closed) {
+    while (agent.queue.length) yield agent.queue.shift();
+    if (agent.closed) break;
+    await new Promise<void>(resolve => { agent.wake = resolve; });
+    agent.wake = null;
   }
+}
+
+function resolvePerm(agent: Agent, id: string, allow: boolean, message?: string): boolean {
+  const perm = agent.pendingPerms.get(id);
+  if (!perm || perm.done) return false;
+  perm.done = true;
+  agent.pendingPerms.delete(id);
+  broadcastPerm(agent.file, { id, state: "resolved", allow });
+  // On allow, updatedInput MUST echo the original input — the CLI replaces the
+  // tool's input with this value, so omitting it runs the tool with no input.
+  perm.resolve(allow
+    ? { behavior: "allow", updatedInput: perm.input }
+    : { behavior: "deny", message: message || "Denied from the viewer" });
+  return true;
+}
+
+function handlePermissionAsk(agent: Agent, toolName: string, input: Record<string, unknown>, opts: any): Promise<unknown> {
+  return new Promise(resolve => {
+    const id = `perm-${++agent.permSeq}`;
+    const perm: PendingPerm = { id, tool: toolName, input, resolve, done: false };
+    agent.pendingPerms.set(id, perm);
+    broadcastPerm(agent.file, { id, state: "ask", tool: toolName, input });
+
+    const timer = setTimeout(() => {
+      resolvePerm(agent, id, false, "permission request timed out in the viewer");
+    }, PERM_TIMEOUT_MS);
+    const origResolve = perm.resolve;
+    perm.resolve = (r) => { clearTimeout(timer); origResolve(r); };
+
+    opts?.signal?.addEventListener?.("abort", () => {
+      resolvePerm(agent, id, false, "aborted");
+    });
+  });
+}
+
+function handleStreamEvent(agent: Agent, ev: any) {
+  if (!ev || typeof ev.type !== "string") return;
+  if (ev.type === "content_block_start") {
+    const block = ev.content_block ?? {};
+    broadcastStream(agent.file, { kind: "block-start", blockType: block.type ?? "", name: block.name ?? "" });
+  } else if (ev.type === "content_block_delta") {
+    const delta = ev.delta ?? {};
+    if (delta.type === "text_delta" && typeof delta.text === "string") {
+      broadcastStream(agent.file, { kind: "text", text: delta.text });
+    }
+    // thinking/tool-input deltas are intentionally not forwarded — the viewer
+    // doesn't render thinking, and tool inputs arrive via the disk pipeline.
+  } else if (ev.type === "content_block_stop") {
+    broadcastStream(agent.file, { kind: "block-end" });
+  }
+}
+
+async function runAgentLoop(agent: Agent) {
+  try {
+    for await (const msg of agent.q) {
+      agent.lastActivity = Date.now();
+      if (msg.type === "stream_event" || msg.type === "partial_assistant") {
+        // field name differs across SDK versions: `event` vs `stream_event`
+        handleStreamEvent(agent, msg.stream_event ?? msg.event);
+        continue;
+      }
+      if (msg.type === "assistant" || msg.type === "user") {
+        if (agent.state !== "working") {
+          agent.state = "working";
+          broadcastAgent(agent.file, "working");
+        }
+        continue; // content reaches clients through the disk pipeline
+      }
+      if (msg.type === "result") {
+        agent.state = "idle";
+        agent.lastError = msg.subtype === "success"
+          ? null
+          : (Array.isArray(msg.errors) && msg.errors.length ? msg.errors.join("; ") : msg.subtype);
+        broadcastStream(agent.file, { kind: "turn-end" });
+        broadcastAgent(agent.file, agent.lastError ? "error" : "idle", agent.lastError);
+      }
+    }
+    // generator finished (deliberate close)
+    if (!agent.lastError) broadcastAgent(agent.file, "gone");
+  } catch (err) {
+    agent.lastError = `${err}`.slice(0, 500) + (agent.stderrTail ? ` · ${agent.stderrTail.slice(-300)}` : "");
+    console.error(`agent loop failed for ${agent.file}:`, agent.lastError);
+    broadcastAgent(agent.file, "error", agent.lastError);
+  } finally {
+    agent.closed = true;
+    agent.wake?.();
+    for (const perm of [...agent.pendingPerms.values()]) {
+      resolvePerm(agent, perm.id, false, "agent closed");
+    }
+    if (agents.get(agent.file) === agent) agents.delete(agent.file);
+  }
+}
+
+async function getOrCreateAgent(file: string): Promise<Agent | { error: string; status: number }> {
+  const existing = agents.get(file);
+  if (existing && !existing.closed) return existing;
+  const starting = startingAgents.get(file);
+  if (starting) return starting;
+
+  if (!snapshot.some(s => s.path === file)) return { error: "unknown session file", status: 404 };
+  const name = file.replace(/\\/g, "/").split("/").pop() ?? "";
+  const sessionId = name.replace(/\.jsonl$/i, "");
+  if (!SESSION_ID_RE.test(sessionId)) return { error: "not a resumable session", status: 422 };
+
+  const promise = (async (): Promise<Agent> => {
+    const cwd = await readSessionCwd(file);
+    if (!cwd) throw Object.assign(new Error("session has no cwd record"), { status: 422 });
+
+    const agent: Agent = {
+      file, sessionId, cwd,
+      q: null, queue: [], wake: null,
+      state: "idle", closed: false,
+      lastActivity: Date.now(), lastError: null, stderrTail: "",
+      permSeq: 0, pendingPerms: new Map(),
+    };
+    agent.q = query({
+      prompt: agentInput(agent),
+      options: {
+        resume: sessionId,
+        cwd,
+        executable: "bun",
+        includePartialMessages: true,
+        permissionMode: "default",
+        stderr: (d: string) => { agent.stderrTail = (agent.stderrTail + d).slice(-2000); },
+        canUseTool: (tool: string, input: Record<string, unknown>, opts: any) =>
+          handlePermissionAsk(agent, tool, input, opts),
+      },
+    });
+    agents.set(file, agent);
+    runAgentLoop(agent);
+    return agent;
+  })();
+
+  startingAgents.set(file, promise);
+  try {
+    return await promise;
+  } catch (err: any) {
+    return { error: err?.message ?? `${err}`, status: err?.status ?? 500 };
+  } finally {
+    startingAgents.delete(file);
+  }
+}
+
+function closeAgent(agent: Agent) {
+  agent.closed = true;
+  agent.wake?.();
+}
+
+// Reap processes that have been idle for a long time so the server doesn't
+// accumulate CLI processes for every conversation ever touched.
+setInterval(() => {
+  const now = Date.now();
+  for (const agent of agents.values()) {
+    if (agent.state === "idle" && agent.pendingPerms.size === 0 && now - agent.lastActivity > AGENT_IDLE_REAP_MS) {
+      closeAgent(agent);
+    }
+  }
+}, 5 * 60 * 1000);
+
+async function readJsonBody(req: Request): Promise<any | null> {
+  try { return await req.json(); } catch { return null; }
+}
+
+async function handleSend(req: Request): Promise<Response> {
+  const body = await readJsonBody(req);
   const file = typeof body?.file === "string" ? body.file : "";
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   if (!file || !text) return Response.json({ error: "missing file or text" }, { status: 400 });
 
-  // Only accept paths the scanner already knows — rules out path traversal.
-  if (!snapshot.some(s => s.path === file)) {
-    return Response.json({ error: "unknown session file" }, { status: 404 });
+  const agent = await getOrCreateAgent(file);
+  if (!(agent as Agent).q) {
+    const e = agent as { error: string; status: number };
+    return Response.json({ error: e.error }, { status: e.status });
   }
+  const a = agent as Agent;
+  a.queue.push({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text }] },
+    parent_tool_use_id: null,
+    session_id: a.sessionId,
+  });
+  a.lastActivity = Date.now();
+  a.wake?.();
+  a.state = "working";
+  broadcastAgent(file, "working");
+  return Response.json({ ok: true });
+}
 
-  const name = file.replace(/\\/g, "/").split("/").pop() ?? "";
-  const sessionId = name.replace(/\.jsonl$/i, "");
-  if (!SESSION_ID_RE.test(sessionId)) {
-    return Response.json({ error: "not a resumable session" }, { status: 422 });
+async function handlePermissionResponse(req: Request): Promise<Response> {
+  const body = await readJsonBody(req);
+  const file = typeof body?.file === "string" ? body.file : "";
+  const id = typeof body?.id === "string" ? body.id : "";
+  const allow = body?.allow === true;
+  const agent = agents.get(file);
+  if (!agent) return Response.json({ error: "no live agent for this session" }, { status: 404 });
+  const message = typeof body?.message === "string" && body.message ? body.message : undefined;
+  if (!resolvePerm(agent, id, allow, message)) {
+    return Response.json({ error: "unknown or already-resolved permission request" }, { status: 404 });
   }
+  agent.lastActivity = Date.now();
+  return Response.json({ ok: true });
+}
 
-  const cwd = await readSessionCwd(file);
-  if (!cwd) return Response.json({ error: "session has no cwd record" }, { status: 422 });
-
-  if (runningSends.has(file)) return Response.json({ error: "busy" }, { status: 409 });
-  runningSends.add(file);
-
-  let proc: ReturnType<typeof Bun.spawn>;
-  try {
-    // Prompt goes over stdin (not argv) — avoids quoting/length issues with
-    // long or multiline Hebrew text.
-    proc = Bun.spawn(["claude", "-p", "--resume", sessionId], {
-      cwd,
-      stdin: enc.encode(text),
-      stdout: "ignore",
-      stderr: "pipe",
-    });
-  } catch (err) {
-    runningSends.delete(file);
-    return Response.json({ error: `failed to launch claude CLI: ${err}` }, { status: 500 });
+async function handleInterrupt(req: Request): Promise<Response> {
+  const body = await readJsonBody(req);
+  const file = typeof body?.file === "string" ? body.file : "";
+  const agent = agents.get(file);
+  if (!agent || agent.closed) return Response.json({ error: "no live agent for this session" }, { status: 404 });
+  try { await agent.q.interrupt(); } catch (err) {
+    return Response.json({ error: `interrupt failed: ${err}` }, { status: 500 });
   }
-
-  broadcastSendState(file, "running");
-  (async () => {
-    let stderr = "";
-    try { stderr = await new Response(proc.stderr as ReadableStream).text(); } catch {}
-    const code = await proc.exited;
-    runningSends.delete(file);
-    if (code === 0) {
-      broadcastSendState(file, "done");
-    } else {
-      const msg = stderr.trim().split("\n").slice(-3).join(" · ").slice(0, 500) || `claude exited with code ${code}`;
-      console.error(`send failed for ${file}:`, msg);
-      broadcastSendState(file, "error", msg);
-    }
-  })();
-
+  agent.lastActivity = Date.now();
   return Response.json({ ok: true });
 }
 
@@ -503,6 +718,14 @@ Bun.serve({
       return handleSend(req).then(withCors);
     }
 
+    if (url.pathname === "/api/permission" && req.method === "POST") {
+      return handlePermissionResponse(req).then(withCors);
+    }
+
+    if (url.pathname === "/api/interrupt" && req.method === "POST") {
+      return handleInterrupt(req).then(withCors);
+    }
+
     if (url.pathname === "/api/search") {
       const q = url.searchParams.get("q") ?? "";
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 60)));
@@ -526,7 +749,20 @@ Bun.serve({
           send(c, "ready", { mode: sub.mode, pinned: sub.pinned ?? null });
           send(c, "sessions", snapshot);
           const latest = snapshot[0]?.path ?? null;
-          processSub(sub, latest).catch(err => console.error("init sub:", err));
+          processSub(sub, latest)
+            .then(() => {
+              // Late joiners need the current live-agent state for their target
+              // (e.g. a reload while Claude is mid-turn or waiting on a prompt).
+              const target = sub.current;
+              const agent = target ? agents.get(target) : null;
+              if (agent && !agent.closed) {
+                send(c, "agent", { file: agent.file, state: agent.lastError ? "error" : agent.state, error: agent.lastError });
+                for (const perm of agent.pendingPerms.values()) {
+                  send(c, "perm", { file: agent.file, id: perm.id, state: "ask", tool: perm.tool, input: perm.input });
+                }
+              }
+            })
+            .catch(err => console.error("init sub:", err));
         },
         cancel() { subs.delete(sub); },
       });

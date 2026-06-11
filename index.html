@@ -1407,6 +1407,68 @@
     flex: none;
   }
 
+  /* Permission prompt — Claude (live process) is asking to run a tool. */
+  .perm-card {
+    position: sticky;
+    bottom: 64px;
+    margin: 0 2px 8px;
+    padding: 12px 14px;
+    background: var(--panel);
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    box-shadow: 0 4px 18px rgba(0, 0, 0, 0.12);
+  }
+  .perm-title { font-size: 13.5px; margin-bottom: 8px; }
+  .perm-title code {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 1px 6px;
+    font-size: 12.5px;
+  }
+  .perm-card pre {
+    margin: 0 0 10px;
+    padding: 8px 10px;
+    max-height: 160px;
+    overflow: auto;
+    font-size: 12px;
+    line-height: 1.45;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .perm-actions { display: flex; gap: 8px; }
+  .perm-btn {
+    font: inherit;
+    font-size: 13px;
+    padding: 6px 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-strong);
+    background: var(--panel-2);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .perm-btn:hover { border-color: var(--accent); }
+  .perm-btn.allow {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+
+  /* Live ghost bubble — current in-progress content block, streamed straight
+     from the process before it's flushed to disk. Replaced by the canonical
+     disk-driven message as soon as the block lands in the .jsonl. */
+  .msg.live { opacity: 0.88; }
+  .msg.live .live-label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .msg.live .live-text { white-space: pre-wrap; word-break: break-word; }
+  .msg.live .live-text::after {
+    content: "▌";
+    color: var(--accent);
+    animation: composer-pulse 1s ease-in-out infinite;
+  }
+
   /* Print: strip all controls and chrome, keep only the conversation. */
   @media print {
     /* Force the light palette for print, even if the viewer is in dark mode and
@@ -1448,6 +1510,8 @@
     .sidebar-spacer,
     #composer,
     .composer-status,
+    #perm-card,
+    .msg.live,
     #page-credit,
     .fab-stack,
     #setup,
@@ -1562,9 +1626,18 @@
     </div>
     <div id="messages"></div>
     <div id="empty" data-i18n="empty_state"></div>
+    <div id="perm-card" class="perm-card" hidden>
+      <div class="perm-title"><span data-i18n="perm_title"></span> <code id="perm-tool" dir="ltr"></code></div>
+      <pre id="perm-input" dir="ltr"></pre>
+      <div class="perm-actions">
+        <button id="perm-allow" type="button" class="perm-btn allow" data-i18n="perm_allow"></button>
+        <button id="perm-deny" type="button" class="perm-btn" data-i18n="perm_deny"></button>
+      </div>
+    </div>
     <div id="composer-status" class="composer-status" hidden></div>
     <form id="composer" class="composer" hidden>
       <textarea id="composer-input" rows="1" dir="auto" data-i18n-ph="composer_ph"></textarea>
+      <button id="composer-stop" class="icon-btn composer-send" type="button" data-icon="squareStop" data-i18n-tt="tt_composer_stop" hidden></button>
       <button id="composer-send" class="icon-btn is-primary composer-send" type="submit" data-icon="send" data-i18n-tt="tt_composer_send"></button>
     </form>
   </main>
@@ -1650,6 +1723,7 @@
 
     // composer
     send:        _ico('<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>'),
+    squareStop:  _ico('<rect width="12" height="12" x="6" y="6" rx="2"/>'),
 
     // floating action buttons (scroll + mobile menu)
     arrowUpToLine:   _ico('<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>'),
@@ -1758,13 +1832,18 @@
       setup_server_pref_fail: (url) =>
         `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, או החלף לתיקייה ישירה בדפדפן.`,
       export_include: "כלול ביצוא",
-      // composer (send into the session — server mode only)
+      // composer (live agent via local server)
       composer_ph: "המשך את השיחה… (Enter לשליחה, Shift+Enter לשורה חדשה)",
-      tt_composer_send: "שלח את ההודעה לסשן דרך claude במחשב שלך",
+      tt_composer_send: "שלח לסשן דרך claude במחשב שלך",
+      tt_composer_stop: "עצור את התור הנוכחי",
       composer_sending: "שולח…",
-      composer_running: "Claude עובד… התשובה תופיע כאן כשתיכתב לתמליל",
-      composer_busy: "כבר רצה שליחה לסשן הזה — המתן שתסתיים",
-      composer_error: (msg) => `השליחה נכשלה: ${msg}`,
+      composer_running: "Claude עובד…",
+      composer_error: (msg) => `שגיאה: ${msg}`,
+      live_tool: (name) => `מריץ ${name}…`,
+      live_writing: "כותב…",
+      perm_title: "Claude מבקש אישור להריץ:",
+      perm_allow: "אשר",
+      perm_deny: "דחה",
     },
     en: {
       _name: "English",
@@ -1842,10 +1921,15 @@
       export_include: "Include in export",
       composer_ph: "Continue the conversation… (Enter to send, Shift+Enter for newline)",
       tt_composer_send: "Send into this session via claude on your machine",
+      tt_composer_stop: "Interrupt the current turn",
       composer_sending: "Sending…",
-      composer_running: "Claude is working… the reply will appear once it's written to the transcript",
-      composer_busy: "A send is already running for this session — wait for it to finish",
-      composer_error: (msg) => `Send failed: ${msg}`,
+      composer_running: "Claude is working…",
+      composer_error: (msg) => `Error: ${msg}`,
+      live_tool: (name) => `Running ${name}…`,
+      live_writing: "Writing…",
+      perm_title: "Claude is asking permission to run:",
+      perm_allow: "Allow",
+      perm_deny: "Deny",
     },
   };
 
@@ -2758,6 +2842,7 @@
     updateHeaderForActive();
     currentMessages = Array.isArray(payload.messages) ? payload.messages.slice() : [];
     messagesEl.innerHTML = "";
+    removeLiveMsg(); // innerHTML wipe detached the ghost node — drop stale refs
     for (const m of payload.messages) messagesEl.appendChild(renderMessage(m));
     emptyEl.style.display = payload.messages.length ? "none" : "block";
     updateExportButtons();
@@ -2788,6 +2873,7 @@
     currentMessages.push(m);
     const node = renderMessage(m);
     messagesEl.appendChild(node);
+    if (liveMsgEl) messagesEl.appendChild(liveMsgEl); // ghost stays last
     if (exportMode) addExportCheckbox(node);
     emptyEl.style.display = "none";
     updateExportButtons();
@@ -2925,50 +3011,151 @@
     onSessions(list) { sessionsList = list; paintSidebar(); updateHeaderForActive(); },
     onReset: applyReset,
     onAppend: applyAppend,
-    onSendState: applySendState,
+    onAgentState: applyAgentState,
+    onPerm: applyPerm,
+    onStream: applyStream,
   };
 
-  // ---------- composer (send into the session — server mode only) ----------
+  // ---------- live agent UI (composer / permissions / stream ghost) ----------
+  // Server mode runs a persistent Claude Code process per conversation. The
+  // composer feeds it input, `perm` events surface tool-permission prompts to
+  // approve/deny, and `stream` events carry live token deltas rendered in a
+  // ghost bubble until the canonical content lands on disk.
   const composerEl = document.getElementById("composer");
   const composerInput = document.getElementById("composer-input");
   const composerSendBtn = document.getElementById("composer-send");
+  const composerStopBtn = document.getElementById("composer-stop");
   const composerStatusEl = document.getElementById("composer-status");
+  const permCardEl = document.getElementById("perm-card");
+  const permToolEl = document.getElementById("perm-tool");
+  const permInputEl = document.getElementById("perm-input");
+  const permAllowBtn = document.getElementById("perm-allow");
+  const permDenyBtn = document.getElementById("perm-deny");
 
-  // The last known send state, keyed to a file so switching sessions doesn't
-  // show a stale "working…" banner from another conversation.
-  let composerState = null; // { file, state: "sending"|"running"|"error", msg? }
+  const agentStates = new Map();   // file -> { state, error }
+  const pendingPerms = new Map();  // perm id -> { file, id, tool, input }
+  let sendingFile = null;          // POST in flight / awaiting first agent event
 
   function renderComposerStatus() {
-    const s = composerState && composerState.file === activeFile ? composerState : null;
-    if (!s) {
-      composerStatusEl.hidden = true;
-      composerStatusEl.textContent = "";
-      composerStatusEl.classList.remove("error", "running");
-      return;
-    }
-    let text;
-    if (s.state === "sending") text = t("composer_sending");
-    else if (s.state === "running") text = t("composer_running");
-    else text = s.msg === "busy" ? t("composer_busy") : t("composer_error", s.msg || "");
+    const a = activeFile ? agentStates.get(activeFile) : null;
+    let text = "";
+    let isError = false;
+    if (sendingFile === activeFile) text = t("composer_sending");
+    else if (a?.state === "working") text = t("composer_running");
+    else if (a?.state === "error" && a.error) { text = t("composer_error", a.error); isError = true; }
     composerStatusEl.textContent = text;
-    composerStatusEl.hidden = false;
-    composerStatusEl.classList.toggle("error", s.state === "error");
-    composerStatusEl.classList.toggle("running", s.state !== "error");
+    composerStatusEl.hidden = !text;
+    composerStatusEl.classList.toggle("error", isError);
+    composerStatusEl.classList.toggle("running", !!text && !isError);
+    composerStopBtn.hidden = a?.state !== "working";
   }
   onLangChange(renderComposerStatus);
 
+  function renderPermCard() {
+    let perm = null;
+    for (const p of pendingPerms.values()) {
+      if (p.file === activeFile) { perm = p; break; }
+    }
+    if (!perm) {
+      permCardEl.hidden = true;
+      permCardEl.dataset.permId = "";
+      return;
+    }
+    permCardEl.dataset.permId = perm.id;
+    permToolEl.textContent = perm.tool;
+    let preview = "";
+    try { preview = JSON.stringify(perm.input, null, 2) ?? ""; } catch {}
+    if (preview.length > 2000) preview = preview.slice(0, 2000) + "…";
+    permInputEl.textContent = preview;
+    permCardEl.hidden = false;
+  }
+
   function updateComposerVisibility() {
     composerEl.hidden = !(source && source.canSend && activeFile);
+    if (composerEl.hidden) removeLiveMsg();
+    renderComposerStatus();
+    renderPermCard();
+  }
+
+  function applyAgentState(p) {
+    if (!p?.file) return;
+    if (p.state === "gone") agentStates.delete(p.file);
+    else agentStates.set(p.file, { state: p.state, error: p.error || null });
+    if (sendingFile === p.file) sendingFile = null;
+    if (p.file === activeFile && p.state !== "working") removeLiveMsg();
     renderComposerStatus();
   }
 
-  // SSE `send` events arrive for every watcher; only the active file is shown.
-  function applySendState(p) {
-    if (!p || !p.file) return;
-    if (p.state === "running") composerState = { file: p.file, state: "running" };
-    else if (p.state === "error") composerState = { file: p.file, state: "error", msg: p.error || "" };
-    else if (composerState && composerState.file === p.file) composerState = null; // done
-    renderComposerStatus();
+  function applyPerm(p) {
+    if (!p?.id) return;
+    if (p.state === "ask") pendingPerms.set(p.id, { file: p.file, id: p.id, tool: p.tool || "?", input: p.input });
+    else pendingPerms.delete(p.id);
+    renderPermCard();
+  }
+
+  async function respondPerm(allow) {
+    const id = permCardEl.dataset.permId;
+    const perm = id ? pendingPerms.get(id) : null;
+    if (!perm || !source?.respondPermission) return;
+    permAllowBtn.disabled = permDenyBtn.disabled = true;
+    try { await source.respondPermission(perm.file, perm.id, allow); }
+    catch (err) { console.error("perm response:", err); }
+    finally {
+      permAllowBtn.disabled = permDenyBtn.disabled = false;
+      pendingPerms.delete(perm.id);
+      renderPermCard();
+    }
+  }
+  permAllowBtn.addEventListener("click", () => respondPerm(true));
+  permDenyBtn.addEventListener("click", () => respondPerm(false));
+
+  // Ghost bubble: shows ONLY the in-progress content block. Completed blocks
+  // are flushed to the .jsonl by the CLI and arrive as canonical `append`s,
+  // so on block-end the ghost just resets to a "writing…" placeholder.
+  let liveMsgEl = null, liveLabelEl = null, liveTextEl = null;
+
+  function ensureLiveMsg() {
+    if (liveMsgEl) return;
+    liveMsgEl = document.createElement("div");
+    liveMsgEl.className = "msg assistant live";
+    liveLabelEl = document.createElement("div");
+    liveLabelEl.className = "live-label";
+    liveTextEl = document.createElement("div");
+    liveTextEl.className = "live-text";
+    liveMsgEl.appendChild(liveLabelEl);
+    liveMsgEl.appendChild(liveTextEl);
+    messagesEl.appendChild(liveMsgEl);
+    emptyEl.style.display = "none";
+  }
+  function removeLiveMsg() {
+    if (!liveMsgEl) return;
+    liveMsgEl.remove();
+    liveMsgEl = liveLabelEl = liveTextEl = null;
+  }
+
+  function applyStream(p) {
+    if (!p || p.file !== activeFile) return;
+    const stick = !window.__smoothScrollActive && nearBottom();
+    if (p.kind === "block-start") {
+      ensureLiveMsg();
+      liveTextEl.textContent = "";
+      liveMsgEl.dir = "auto";
+      if (p.blockType === "tool_use") liveLabelEl.textContent = t("live_tool", p.name || "tool");
+      else if (p.blockType === "text") liveLabelEl.textContent = "";
+      else liveLabelEl.textContent = t("live_writing");
+    } else if (p.kind === "text") {
+      ensureLiveMsg();
+      liveTextEl.textContent += p.text;
+      if (liveMsgEl.dir !== "rtl" && HEBREW_RE.test(p.text)) liveMsgEl.dir = "rtl";
+    } else if (p.kind === "block-end") {
+      if (liveMsgEl) {
+        liveTextEl.textContent = "";
+        liveLabelEl.textContent = t("live_writing");
+      }
+    } else if (p.kind === "turn-end") {
+      removeLiveMsg();
+    }
+    if (stick) requestAnimationFrame(scrollMainToBottom);
   }
 
   async function composerSubmit() {
@@ -2976,28 +3163,27 @@
     if (!text || !source?.canSend || !activeFile) return;
     const file = activeFile;
     composerSendBtn.disabled = true;
-    composerInput.disabled = true;
-    composerState = { file, state: "sending" };
+    sendingFile = file;
     renderComposerStatus();
     try {
       await source.sendMessage(file, text);
       composerInput.value = "";
       autoGrowComposer();
-      // The server broadcasts "running" over SSE, but set it locally too in
-      // case the event raced ahead of this response.
-      if (composerState?.state === "sending") {
-        composerState = { file, state: "running" };
-        renderComposerStatus();
-      }
     } catch (err) {
-      composerState = { file, state: "error", msg: String(err?.message || err) };
+      sendingFile = null;
+      agentStates.set(file, { state: "error", error: String(err?.message || err) });
       renderComposerStatus();
     } finally {
       composerSendBtn.disabled = false;
-      composerInput.disabled = false;
       composerInput.focus();
     }
   }
+
+  composerStopBtn.addEventListener("click", () => {
+    if (activeFile && source?.interrupt) {
+      source.interrupt(activeFile).catch(err => console.error("interrupt:", err));
+    }
+  });
 
   function autoGrowComposer() {
     composerInput.style.height = "auto";
@@ -3327,14 +3513,14 @@ ${titleEl}${wrap.outerHTML}
       const res = await fetch(`${this.baseUrl}/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
       return await res.json();
     }
-    // Sending is server-only: the server spawns the local `claude` CLI
-    // (`claude -p --resume`), which LocalSource has no way to do from a page.
+    // Sending is server-only: the server keeps a live Claude Code process per
+    // conversation (Agent SDK), which LocalSource has no way to do from a page.
     get canSend() { return true; }
-    async sendMessage(file, text) {
-      const res = await fetch(`${this.baseUrl}/api/send`, {
+    async _post(path, body) {
+      const res = await fetch(`${this.baseUrl}${path}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ file, text }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         let msg = `HTTP ${res.status}`;
@@ -3345,6 +3531,11 @@ ${titleEl}${wrap.outerHTML}
         throw new Error(msg);
       }
     }
+    sendMessage(file, text) { return this._post("/api/send", { file, text }); }
+    interrupt(file) { return this._post("/api/interrupt", { file }); }
+    respondPermission(file, id, allow, message) {
+      return this._post("/api/permission", { file, id, allow, message });
+    }
     destroy() { if (this.es) this.es.close(); this.es = null; }
     _connect() {
       if (this.es) this.es.close();
@@ -3354,7 +3545,9 @@ ${titleEl}${wrap.outerHTML}
       es.addEventListener("sessions", e => this.handlers.onSessions(JSON.parse(e.data)));
       es.addEventListener("reset", e => this.handlers.onReset(JSON.parse(e.data)));
       es.addEventListener("append", e => this.handlers.onAppend(JSON.parse(e.data)));
-      es.addEventListener("send", e => this.handlers.onSendState?.(JSON.parse(e.data)));
+      es.addEventListener("agent", e => this.handlers.onAgentState?.(JSON.parse(e.data)));
+      es.addEventListener("perm", e => this.handlers.onPerm?.(JSON.parse(e.data)));
+      es.addEventListener("stream", e => this.handlers.onStream?.(JSON.parse(e.data)));
       es.onerror = () => this.handlers.onStatus("reconnecting…", "dead");
       this.es = es;
     }
