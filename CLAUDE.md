@@ -53,7 +53,8 @@ All responses include `Access-Control-Allow-Origin: *` plus `Access-Control-Allo
 - `GET /` and `GET /index.html` → reads `index.html` from disk on each request (so a browser refresh picks up edits without restarting the server).
 - `GET /api/sessions` → snapshot JSON; mainly for debugging — the client normally gets sessions over SSE.
 - `GET /api/search?q=&limit=` → AND-of-terms search across `messageCache`. Score = total term occurrences; ties break by `timestamp` desc. `limit` defaults to 60, hard max 200.
-- `GET /events` (with optional `?file=`) → SSE stream emitting `ready`, `sessions`, `reset`, `append`. `idleTimeout: 0` keeps long connections alive.
+- `GET /events` (with optional `?file=`) → SSE stream emitting `ready`, `sessions`, `reset`, `append`, `send`. `idleTimeout: 0` keeps long connections alive.
+- `POST /api/send` (`{file, text}`) → spawns the **local `claude` CLI** headlessly (`claude -p --resume <sessionId>`, prompt over stdin) from the session's original `cwd` (read from the `.jsonl`'s `cwd` field). Resume keeps the same session ID, so the reply is appended to the same file and surfaces through the normal watcher → SSE pipeline. The endpoint returns `{ok:true}` as soon as the process is spawned; progress arrives as SSE `send` events (`{file, state: "running"|"done"|"error", error}`). Auth is whatever the user's CLI already has (subscription OAuth or API key) — the server never handles credentials. `file` must already exist in `snapshot` (no path traversal), and only one send per file runs at a time (409 `busy`). The client composer (`#composer` in [index.html](index.html)) renders only in **server mode**: `LocalSource` has no `canSend`, since a browser page can't spawn processes.
 
 ### LocalSource (in-browser source) ([index.html](index.html))
 

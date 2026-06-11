@@ -1343,6 +1343,70 @@
   }
   .msg.export-off { opacity: 0.35; }
 
+  /* Composer — send a follow-up into the active session (server mode only:
+     the server spawns the local `claude` CLI; LocalSource has no way to run
+     processes, so the form stays hidden there). Sticky so it's reachable while
+     reading scrollback, with a gradient fade into the page background. */
+  .composer-status {
+    position: sticky;
+    bottom: 64px;
+    margin: 0 2px;
+    padding: 4px 10px;
+    font-size: 12.5px;
+    color: var(--muted);
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    width: fit-content;
+    max-width: 100%;
+  }
+  .composer-status.running::before {
+    content: "";
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-inline-end: 7px;
+    animation: composer-pulse 1.2s ease-in-out infinite;
+  }
+  @keyframes composer-pulse {
+    0%, 100% { opacity: 0.35; }
+    50% { opacity: 1; }
+  }
+  .composer-status.error { color: var(--diff-del-fg); background: var(--diff-del-bg); border-color: transparent; }
+  .composer {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    gap: 8px;
+    align-items: flex-end;
+    padding: 10px 0 16px;
+    background: linear-gradient(to top, var(--bg) 80%, transparent);
+  }
+  .composer textarea {
+    flex: 1;
+    resize: none;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 9px 12px;
+    min-height: 40px;
+    max-height: 180px;
+    outline: none;
+  }
+  .composer textarea:focus { border-color: var(--accent); }
+  .composer textarea:disabled { opacity: 0.6; }
+  .composer .composer-send {
+    width: 40px;
+    height: 40px;
+    flex: none;
+  }
+
   /* Print: strip all controls and chrome, keep only the conversation. */
   @media print {
     /* Force the light palette for print, even if the viewer is in dark mode and
@@ -1382,6 +1446,8 @@
     .app-watermark,
     .sidebar,
     .sidebar-spacer,
+    #composer,
+    .composer-status,
     #page-credit,
     .fab-stack,
     #setup,
@@ -1496,6 +1562,11 @@
     </div>
     <div id="messages"></div>
     <div id="empty" data-i18n="empty_state"></div>
+    <div id="composer-status" class="composer-status" hidden></div>
+    <form id="composer" class="composer" hidden>
+      <textarea id="composer-input" rows="1" dir="auto" data-i18n-ph="composer_ph"></textarea>
+      <button id="composer-send" class="icon-btn is-primary composer-send" type="submit" data-icon="send" data-i18n-tt="tt_composer_send"></button>
+    </form>
   </main>
   <div class="sidebar-spacer" aria-hidden="true"></div>
   <aside class="sidebar">
@@ -1576,6 +1647,9 @@
 
     // language toggle
     languages:   _ico('<path d="m5 8 6 6"/><path d="m4 14 6-6 2-3"/><path d="M2 5h12"/><path d="M7 2h1"/><path d="m22 22-5-10-5 10"/><path d="M14 18h6"/>'),
+
+    // composer
+    send:        _ico('<path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z"/><path d="m21.854 2.147-10.94 10.939"/>'),
 
     // floating action buttons (scroll + mobile menu)
     arrowUpToLine:   _ico('<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>'),
@@ -1684,6 +1758,13 @@
       setup_server_pref_fail: (url) =>
         `לא הצלחתי להגיע ל-${url}. ודא שהפעלת "bun run start" בתיקיית הפרויקט, או החלף לתיקייה ישירה בדפדפן.`,
       export_include: "כלול ביצוא",
+      // composer (send into the session — server mode only)
+      composer_ph: "המשך את השיחה… (Enter לשליחה, Shift+Enter לשורה חדשה)",
+      tt_composer_send: "שלח את ההודעה לסשן דרך claude במחשב שלך",
+      composer_sending: "שולח…",
+      composer_running: "Claude עובד… התשובה תופיע כאן כשתיכתב לתמליל",
+      composer_busy: "כבר רצה שליחה לסשן הזה — המתן שתסתיים",
+      composer_error: (msg) => `השליחה נכשלה: ${msg}`,
     },
     en: {
       _name: "English",
@@ -1759,6 +1840,12 @@
       setup_server_pref_fail: (url) =>
         `Couldn't reach ${url}. Make sure you ran "bun run start" in the project folder, or switch to the direct folder option above.`,
       export_include: "Include in export",
+      composer_ph: "Continue the conversation… (Enter to send, Shift+Enter for newline)",
+      tt_composer_send: "Send into this session via claude on your machine",
+      composer_sending: "Sending…",
+      composer_running: "Claude is working… the reply will appear once it's written to the transcript",
+      composer_busy: "A send is already running for this session — wait for it to finish",
+      composer_error: (msg) => `Send failed: ${msg}`,
     },
   };
 
@@ -2657,6 +2744,7 @@
       sessionTitleEl.hidden = !title;
     }
     if (copyPathBtn) copyPathBtn.hidden = !activeFile;
+    updateComposerVisibility();
   }
 
   function applyReset(payload) {
@@ -2834,7 +2922,90 @@
     onSessions(list) { sessionsList = list; paintSidebar(); updateHeaderForActive(); },
     onReset: applyReset,
     onAppend: applyAppend,
+    onSendState: applySendState,
   };
+
+  // ---------- composer (send into the session — server mode only) ----------
+  const composerEl = document.getElementById("composer");
+  const composerInput = document.getElementById("composer-input");
+  const composerSendBtn = document.getElementById("composer-send");
+  const composerStatusEl = document.getElementById("composer-status");
+
+  // The last known send state, keyed to a file so switching sessions doesn't
+  // show a stale "working…" banner from another conversation.
+  let composerState = null; // { file, state: "sending"|"running"|"error", msg? }
+
+  function renderComposerStatus() {
+    const s = composerState && composerState.file === activeFile ? composerState : null;
+    if (!s) {
+      composerStatusEl.hidden = true;
+      composerStatusEl.textContent = "";
+      composerStatusEl.classList.remove("error", "running");
+      return;
+    }
+    let text;
+    if (s.state === "sending") text = t("composer_sending");
+    else if (s.state === "running") text = t("composer_running");
+    else text = s.msg === "busy" ? t("composer_busy") : t("composer_error", s.msg || "");
+    composerStatusEl.textContent = text;
+    composerStatusEl.hidden = false;
+    composerStatusEl.classList.toggle("error", s.state === "error");
+    composerStatusEl.classList.toggle("running", s.state !== "error");
+  }
+  onLangChange(renderComposerStatus);
+
+  function updateComposerVisibility() {
+    composerEl.hidden = !(source && source.canSend && activeFile);
+    renderComposerStatus();
+  }
+
+  // SSE `send` events arrive for every watcher; only the active file is shown.
+  function applySendState(p) {
+    if (!p || !p.file) return;
+    if (p.state === "running") composerState = { file: p.file, state: "running" };
+    else if (p.state === "error") composerState = { file: p.file, state: "error", msg: p.error || "" };
+    else if (composerState && composerState.file === p.file) composerState = null; // done
+    renderComposerStatus();
+  }
+
+  async function composerSubmit() {
+    const text = composerInput.value.trim();
+    if (!text || !source?.canSend || !activeFile) return;
+    const file = activeFile;
+    composerSendBtn.disabled = true;
+    composerInput.disabled = true;
+    composerState = { file, state: "sending" };
+    renderComposerStatus();
+    try {
+      await source.sendMessage(file, text);
+      composerInput.value = "";
+      autoGrowComposer();
+      // The server broadcasts "running" over SSE, but set it locally too in
+      // case the event raced ahead of this response.
+      if (composerState?.state === "sending") {
+        composerState = { file, state: "running" };
+        renderComposerStatus();
+      }
+    } catch (err) {
+      composerState = { file, state: "error", msg: String(err?.message || err) };
+      renderComposerStatus();
+    } finally {
+      composerSendBtn.disabled = false;
+      composerInput.disabled = false;
+      composerInput.focus();
+    }
+  }
+
+  function autoGrowComposer() {
+    composerInput.style.height = "auto";
+    composerInput.style.height = Math.min(composerInput.scrollHeight, 180) + "px";
+  }
+
+  composerEl.addEventListener("submit", (e) => { e.preventDefault(); composerSubmit(); });
+  composerInput.addEventListener("input", autoGrowComposer);
+  composerInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); composerSubmit(); }
+  });
 
   function pinTo(path) {
     mode = "pinned"; pinnedFile = path;
@@ -3153,6 +3324,24 @@ ${titleEl}${wrap.outerHTML}
       const res = await fetch(`${this.baseUrl}/api/search?q=${encodeURIComponent(q)}&limit=${limit}`);
       return await res.json();
     }
+    // Sending is server-only: the server spawns the local `claude` CLI
+    // (`claude -p --resume`), which LocalSource has no way to do from a page.
+    get canSend() { return true; }
+    async sendMessage(file, text) {
+      const res = await fetch(`${this.baseUrl}/api/send`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ file, text }),
+      });
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const j = await res.json();
+          if (j?.error) msg = j.error;
+        } catch {}
+        throw new Error(msg);
+      }
+    }
     destroy() { if (this.es) this.es.close(); this.es = null; }
     _connect() {
       if (this.es) this.es.close();
@@ -3162,6 +3351,7 @@ ${titleEl}${wrap.outerHTML}
       es.addEventListener("sessions", e => this.handlers.onSessions(JSON.parse(e.data)));
       es.addEventListener("reset", e => this.handlers.onReset(JSON.parse(e.data)));
       es.addEventListener("append", e => this.handlers.onAppend(JSON.parse(e.data)));
+      es.addEventListener("send", e => this.handlers.onSendState?.(JSON.parse(e.data)));
       es.onerror = () => this.handlers.onStatus("reconnecting…", "dead");
       this.es = es;
     }

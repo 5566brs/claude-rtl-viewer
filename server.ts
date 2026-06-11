@@ -345,6 +345,95 @@ async function handleChange(relPath: string) {
   }
 }
 
+// ---------- send-to-session (headless `claude -p --resume`) ----------
+// Spawns the locally-installed Claude Code CLI, so it uses whatever auth the
+// user already has (subscription OAuth or API key) — no key is handled here.
+// The reply is written by the CLI to the same .jsonl (resume keeps the session
+// ID), so the existing watcher → SSE pipeline surfaces it with no extra work.
+
+const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const runningSends = new Set<string>();
+
+function broadcastSendState(file: string, state: "running" | "done" | "error", error?: string) {
+  for (const sub of subs) send(sub.controller, "send", { file, state, error: error ?? null });
+}
+
+// The CLI must run from the session's original working directory so --resume
+// finds the session under the matching project folder.
+async function readSessionCwd(path: string): Promise<string | null> {
+  try {
+    const buf = await Bun.file(path).slice(0, 256 * 1024).arrayBuffer();
+    const text = dec.decode(buf);
+    for (const line of text.split("\n")) {
+      if (!line || !line.includes('"cwd"')) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (typeof obj?.cwd === "string" && obj.cwd) return obj.cwd;
+      } catch {}
+    }
+  } catch {}
+  return null;
+}
+
+async function handleSend(req: Request): Promise<Response> {
+  let body: any;
+  try { body = await req.json(); } catch {
+    return Response.json({ error: "invalid JSON body" }, { status: 400 });
+  }
+  const file = typeof body?.file === "string" ? body.file : "";
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  if (!file || !text) return Response.json({ error: "missing file or text" }, { status: 400 });
+
+  // Only accept paths the scanner already knows — rules out path traversal.
+  if (!snapshot.some(s => s.path === file)) {
+    return Response.json({ error: "unknown session file" }, { status: 404 });
+  }
+
+  const name = file.replace(/\\/g, "/").split("/").pop() ?? "";
+  const sessionId = name.replace(/\.jsonl$/i, "");
+  if (!SESSION_ID_RE.test(sessionId)) {
+    return Response.json({ error: "not a resumable session" }, { status: 422 });
+  }
+
+  const cwd = await readSessionCwd(file);
+  if (!cwd) return Response.json({ error: "session has no cwd record" }, { status: 422 });
+
+  if (runningSends.has(file)) return Response.json({ error: "busy" }, { status: 409 });
+  runningSends.add(file);
+
+  let proc: ReturnType<typeof Bun.spawn>;
+  try {
+    // Prompt goes over stdin (not argv) — avoids quoting/length issues with
+    // long or multiline Hebrew text.
+    proc = Bun.spawn(["claude", "-p", "--resume", sessionId], {
+      cwd,
+      stdin: enc.encode(text),
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+  } catch (err) {
+    runningSends.delete(file);
+    return Response.json({ error: `failed to launch claude CLI: ${err}` }, { status: 500 });
+  }
+
+  broadcastSendState(file, "running");
+  (async () => {
+    let stderr = "";
+    try { stderr = await new Response(proc.stderr as ReadableStream).text(); } catch {}
+    const code = await proc.exited;
+    runningSends.delete(file);
+    if (code === 0) {
+      broadcastSendState(file, "done");
+    } else {
+      const msg = stderr.trim().split("\n").slice(-3).join(" · ").slice(0, 500) || `claude exited with code ${code}`;
+      console.error(`send failed for ${file}:`, msg);
+      broadcastSendState(file, "error", msg);
+    }
+  })();
+
+  return Response.json({ ok: true });
+}
+
 const pendingChanges = new Map<string, ReturnType<typeof setTimeout>>();
 function scheduleChange(relPath: string) {
   const existing = pendingChanges.get(relPath);
@@ -377,7 +466,7 @@ async function loadHtml(): Promise<string> {
 
 const CORS_HEADERS: Record<string, string> = {
   "access-control-allow-origin": "*",
-  "access-control-allow-methods": "GET, OPTIONS",
+  "access-control-allow-methods": "GET, POST, OPTIONS",
   "access-control-allow-headers": "*",
   "access-control-allow-private-network": "true",
 };
@@ -405,6 +494,10 @@ Bun.serve({
 
     if (url.pathname === "/api/sessions") {
       return withCors(Response.json(snapshot));
+    }
+
+    if (url.pathname === "/api/send" && req.method === "POST") {
+      return handleSend(req).then(withCors);
     }
 
     if (url.pathname === "/api/search") {
