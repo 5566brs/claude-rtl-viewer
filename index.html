@@ -548,6 +548,15 @@
   .body blockquote, .body ul, .body ol, .body table, .body td, .body th {
     unicode-bidi: isolate;
   }
+  /* Hidden hard-LTR override: double-click the empty transcript area toggles
+     it (persisted in localStorage). Forces every message + block to LTR,
+     overriding the per-block dir="rtl" attribute the content-sniffer sets. */
+  #messages.force-ltr,
+  #messages.force-ltr .body,
+  #messages.force-ltr .body [dir] {
+    direction: ltr !important;
+    text-align: left !important;
+  }
   .body p { margin: 0.55em 0; }
   .body h1, .body h2, .body h3, .body h4 { margin: 0.8em 0 0.4em; line-height: 1.3; }
   .body h1 { font-size: 1.35em; }
@@ -2256,6 +2265,21 @@
   // ---------- shared DOM + render ----------
   const layoutEl = document.querySelector(".layout");
   const messagesEl = document.getElementById("messages");
+
+  // Hidden hard-LTR escape hatch: when the content-sniffer guesses wrong (e.g.
+  // an English paragraph quoting a Hebrew word), double-clicking the empty
+  // transcript area forces the whole conversation view to LTR. Persisted, and
+  // a class on #messages so it survives re-renders (innerHTML, not the node).
+  const FORCE_LTR_KEY = "rtl-viewer:force-ltr";
+  function applyForceLtr(on) { messagesEl.classList.toggle("force-ltr", on); }
+  try { applyForceLtr(localStorage.getItem(FORCE_LTR_KEY) === "1"); } catch {}
+  messagesEl.addEventListener("dblclick", e => {
+    if (e.target.closest(".msg")) return; // ignore double-click on message text
+    const on = !messagesEl.classList.contains("force-ltr");
+    applyForceLtr(on);
+    try { localStorage.setItem(FORCE_LTR_KEY, on ? "1" : "0"); } catch {}
+  });
+
   const sessionsEl = document.getElementById("sessions");
   const statusEl = document.getElementById("status");
   const sessionTitleEl = document.getElementById("session-title");
@@ -2272,7 +2296,19 @@
   const changeSourceBtn = document.getElementById("change-source-btn");
 
   const RTL_TAGS = "p,li,h1,h2,h3,h4,h5,h6,blockquote,td,th,table,ul,ol";
+  // Direction by majority script, not "any Hebrew present": an English
+  // paragraph that merely quotes a Hebrew word (e.g. a UI string) stays LTR,
+  // while a Hebrew sentence opening with a number/punctuation still gets RTL.
+  function dirFor(text) {
+    const t = text || "";
+    const heb = (t.match(HEBREW_G) || []).length;
+    const lat = (t.match(LATIN_G) || []).length;
+    return heb > lat ? "rtl" : "auto";
+  }
   const HEBREW_RE = /[֐-׿יִ-ﭏ]/;
+
+  const HEBREW_G = new RegExp(HEBREW_RE.source, "g");
+  const LATIN_G = /[A-Za-z]/g;
 
   let rtf = new Intl.RelativeTimeFormat(STRINGS[currentLang]._locale, { numeric: "auto" });
   onLangChange(lang => {
@@ -2714,9 +2750,9 @@
     body.className = "body";
     body.dir = "auto";
     body.innerHTML = renderMarkdown(m.text);
-    body.dir = HEBREW_RE.test(m.text) ? "rtl" : "auto";
+    body.dir = dirFor(m.text);
     body.querySelectorAll(RTL_TAGS).forEach(el => {
-      el.dir = HEBREW_RE.test(el.textContent || "") ? "rtl" : "auto";
+      el.dir = dirFor(el.textContent || "");
     });
     div.append(role, body);
     return div;
@@ -3146,7 +3182,7 @@
     } else if (p.kind === "text") {
       ensureLiveMsg();
       liveTextEl.textContent += p.text;
-      if (liveMsgEl.dir !== "rtl" && HEBREW_RE.test(p.text)) liveMsgEl.dir = "rtl";
+      liveMsgEl.dir = dirFor(liveTextEl.textContent);
     } else if (p.kind === "block-end") {
       if (liveMsgEl) {
         liveTextEl.textContent = "";
