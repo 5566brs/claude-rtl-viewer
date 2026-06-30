@@ -2229,11 +2229,14 @@
     // Queued input: a message the user typed while the agent was mid-turn is
     // persisted as an `attachment` (subtype "queued_command"), NOT as a normal
     // `type:"user"` entry — without this branch it vanishes from the transcript.
-    // Only this subtype carries user text; the others (todo_reminder,
-    // skill_listing, *_delta) are system noise and stay dropped. The dequeued
-    // prompt is fed to the model but not re-logged as a user turn, so there's no
-    // duplicate to guard against.
-    if (obj.type === "attachment" && obj.attachment?.type === "queued_command") {
+    // Gate on commandMode === "prompt": the sibling mode "task-notification"
+    // carries system `<task-notification>` blocks (background-task completions),
+    // not user input, and would otherwise render as fake user messages. Anything
+    // that still slips in as a tag (e.g. `<ide_opened_file>`) is caught by the
+    // shared cleanUserText + guard below. The dequeued prompt is fed to the model
+    // but not re-logged as a user turn, so there's no duplicate to guard against.
+    if (obj.type === "attachment" && obj.attachment?.type === "queued_command"
+        && obj.attachment.commandMode === "prompt") {
       const p = obj.attachment.prompt;
       let text = "";
       if (typeof p === "string") text = p;
