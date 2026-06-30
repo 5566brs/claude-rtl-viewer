@@ -1376,6 +1376,23 @@
     width: fit-content;
     max-width: 100%;
   }
+  /* Read-only banner — a session opened outside the viewer can't be driven here
+     (it's owned by another process), so the composer is replaced by this note. */
+  .composer-readonly {
+    position: sticky;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0 0 16px;
+    padding: 9px 12px;
+    font-size: 12.5px;
+    color: var(--muted);
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .composer-readonly svg { width: 15px; height: 15px; flex: none; opacity: 0.8; }
   .composer-status.running::before {
     content: "";
     display: inline-block;
@@ -1537,6 +1554,25 @@
     outline: none;
   }
   .newchat-path-row input:focus { border-color: var(--accent); }
+  /* Inline "create folder" row — toggled open by the folder-plus button. */
+  .newchat-mkdir-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 0 16px 8px;
+  }
+  .newchat-mkdir-row input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 7px 10px;
+    outline: none;
+  }
   .newchat-dirs {
     flex: 1;
     overflow: auto;
@@ -1724,6 +1760,7 @@
     .sidebar-spacer,
     #composer,
     .composer-status,
+    .composer-readonly,
     #perm-card,
     .msg.live,
     #page-credit,
@@ -1850,6 +1887,10 @@
       </div>
     </div>
     <div id="composer-status" class="composer-status" hidden></div>
+    <div id="composer-readonly" class="composer-readonly" hidden>
+      <span data-icon="eye"></span>
+      <span data-i18n="composer_readonly"></span>
+    </div>
     <form id="composer" class="composer" hidden>
       <button id="composer-mode" class="mode-btn" type="button" data-mode="default"></button>
       <textarea id="composer-input" rows="1" dir="auto" data-i18n-ph="composer_ph"></textarea>
@@ -1894,6 +1935,12 @@
       <button id="newchat-up" class="icon-btn is-sm" type="button" data-icon="arrowUp" data-i18n-tt="newchat_up"></button>
       <input id="newchat-path" type="text" dir="ltr" spellcheck="false" data-i18n-ph="newchat_path_ph" />
       <button id="newchat-go" class="icon-btn is-sm" type="button" data-icon="chevronRight" data-i18n-tt="newchat_go"></button>
+      <button id="newchat-mkdir" class="icon-btn is-sm" type="button" data-icon="folderPlus" data-i18n-tt="newchat_mkdir_tt"></button>
+    </div>
+    <div id="newchat-mkdir-row" class="newchat-mkdir-row" hidden>
+      <input id="newchat-mkdir-name" type="text" dir="ltr" spellcheck="false" data-i18n-ph="newchat_mkdir_ph" />
+      <button id="newchat-mkdir-create" class="icon-btn is-sm is-primary" type="button" data-icon="check"></button>
+      <button id="newchat-mkdir-cancel" class="icon-btn is-sm" type="button" data-icon="x"></button>
     </div>
     <div id="newchat-dirs" class="newchat-dirs"></div>
     <div id="newchat-error" class="newchat-error" hidden></div>
@@ -1977,6 +2024,8 @@
     messageSquarePlus: _ico('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" x2="15" y1="10" y2="10"/><line x1="12" x2="12" y1="7" y2="13"/>'),
     arrowUp:           _ico('<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>'),
     folder:            _ico('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
+    folderPlus:        _ico('<path d="M12 10v6"/><path d="M9 13h6"/><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
+    eye:               _ico('<path d="M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0"/><circle cx="12" cy="12" r="3"/>'),
   };
 
   // Inflate any [data-icon="name"] elements with their SVG, runs once at start.
@@ -2086,6 +2135,11 @@
       tt_composer_stop: "עצור את התור הנוכחי",
       composer_sending: "שולח…",
       composer_running: "Claude עובד…",
+      composer_requesting: "שולח בקשה ל-Claude…",
+      composer_compacting: "מכווץ הקשר…",
+      composer_waiting: "ממתין לאישור…",
+      composer_elapsed: (s) => `· ${s} ש׳`,
+      composer_readonly: "השיחה נפתחה מחוץ לממשק הזה — קריאה בלבד. פתח \"צ'אט חדש\" כדי לשוחח.",
       composer_error: (msg) => `שגיאה: ${msg}`,
       // permission-mode selector (Claude Code's Shift+Tab cycle)
       mode_default: "רגיל",
@@ -2106,6 +2160,8 @@
       newchat_cwd: (p) => `יתחיל ב: ${p}`,
       newchat_start: "התחל צ'אט",
       newchat_starting: "מתחיל…",
+      newchat_mkdir_tt: "צור תיקייה חדשה כאן",
+      newchat_mkdir_ph: "שם התיקייה החדשה…",
       newchat_err_no_text: "כתוב הודעה ראשונה",
       newchat_err_generic: (msg) => `שגיאה: ${msg}`,
       live_tool: (name) => `מריץ ${name}…`,
@@ -2193,6 +2249,11 @@
       tt_composer_stop: "Interrupt the current turn",
       composer_sending: "Sending…",
       composer_running: "Claude is working…",
+      composer_requesting: "Sending request to Claude…",
+      composer_compacting: "Compacting context…",
+      composer_waiting: "Waiting for approval…",
+      composer_elapsed: (s) => `· ${s}s`,
+      composer_readonly: "This conversation was opened outside this viewer — read-only. Use \"New chat\" to chat.",
       composer_error: (msg) => `Error: ${msg}`,
       // permission-mode selector (Claude Code's Shift+Tab cycle)
       mode_default: "Default",
@@ -2213,6 +2274,8 @@
       newchat_cwd: (p) => `Will start in: ${p}`,
       newchat_start: "Start chat",
       newchat_starting: "Starting…",
+      newchat_mkdir_tt: "Create a new folder here",
+      newchat_mkdir_ph: "New folder name…",
       newchat_err_no_text: "Write a first message",
       newchat_err_generic: (msg) => `Error: ${msg}`,
       live_tool: (name) => `Running ${name}…`,
@@ -3397,6 +3460,7 @@
   const composerSendBtn = document.getElementById("composer-send");
   const composerStopBtn = document.getElementById("composer-stop");
   const composerStatusEl = document.getElementById("composer-status");
+  const composerReadonlyEl = document.getElementById("composer-readonly");
   const composerModeBtn = document.getElementById("composer-mode");
   const permCardEl = document.getElementById("perm-card");
   const permToolEl = document.getElementById("perm-tool");
@@ -3452,18 +3516,52 @@
   if (composerModeBtn) composerModeBtn.addEventListener("click", cycleMode);
   onLangChange(renderModeBtn);
 
+  // A session is "ours to drive" only if it was started from this viewer
+  // (server marks it `owned`). Others are read-only — resuming them would fork
+  // the conversation against the process that actually owns it (VS Code / CLI).
+  function isOwned(file) {
+    if (!file) return false;
+    const s = sessionsList.find(x => x.path === file);
+    return !!(s && s.owned);
+  }
+
+  // Reliable working sub-status, straight from the agent's session_state_changed
+  // / status signals (not guessed from message timing).
+  function activityLabel(a) {
+    if (a?.activity === "requesting") return t("composer_requesting");
+    if (a?.activity === "compacting") return t("composer_compacting");
+    if (a?.activity === "requires_action") return t("composer_waiting");
+    return t("composer_running");
+  }
+  const workStart = new Map();   // file -> ms when the current working stretch began
+  let workTick = null;
+  function workElapsed(file) {
+    const s = workStart.get(file);
+    return s ? Math.floor((Date.now() - s) / 1000) : 0;
+  }
+  function ensureWorkTick() {
+    const active = activeFile && agentStates.get(activeFile)?.state === "working";
+    if (active && !workTick) workTick = setInterval(renderComposerStatus, 1000);
+    else if (!active && workTick) { clearInterval(workTick); workTick = null; }
+  }
+
   function renderComposerStatus() {
     const a = activeFile ? agentStates.get(activeFile) : null;
     let text = "";
     let isError = false;
     if (sendingFile === activeFile) text = t("composer_sending");
-    else if (a?.state === "working") text = t("composer_running");
+    else if (a?.state === "working") {
+      text = activityLabel(a);
+      const s = workElapsed(activeFile);
+      if (s >= 1) text += " " + t("composer_elapsed", s);
+    }
     else if (a?.state === "error" && a.error) { text = t("composer_error", a.error); isError = true; }
     composerStatusEl.textContent = text;
     composerStatusEl.hidden = !text;
     composerStatusEl.classList.toggle("error", isError);
     composerStatusEl.classList.toggle("running", !!text && !isError);
     composerStopBtn.hidden = a?.state !== "working";
+    ensureWorkTick();
     updateFabOffset();
   }
   onLangChange(renderComposerStatus);
@@ -3489,18 +3587,27 @@
   }
 
   function updateComposerVisibility() {
-    composerEl.hidden = !(source && source.canSend && activeFile);
+    const serverMode = !!(source && source.canSend && activeFile);
+    const owned = serverMode && isOwned(activeFile);
+    composerEl.hidden = !owned;
+    // A session open in server mode that we don't own: read-only, with a note
+    // explaining why there's no composer (and how to get one).
+    composerReadonlyEl.hidden = !(serverMode && !owned);
     if (composerEl.hidden) removeLiveMsg();
     renderComposerStatus();
     renderPermCard();
     renderModeBtn();
     updateNewChatBtn();
+    updateFabOffset();
   }
 
   function applyAgentState(p) {
     if (!p?.file) return;
-    if (p.state === "gone") agentStates.delete(p.file);
-    else agentStates.set(p.file, { state: p.state, error: p.error || null });
+    if (p.state === "gone") { agentStates.delete(p.file); workStart.delete(p.file); }
+    else agentStates.set(p.file, { state: p.state, error: p.error || null, activity: p.activity || null });
+    // Track the start of a working stretch for the elapsed-time readout.
+    if (p.state === "working") { if (!workStart.has(p.file)) workStart.set(p.file, Date.now()); }
+    else workStart.delete(p.file);
     // The server echoes the conversation's permission mode on every agent event.
     if (p.mode && MODES.includes(p.mode)) {
       agentModes.set(p.file, p.mode);
@@ -3965,6 +4072,7 @@ ${titleEl}${wrap.outerHTML}
       return await res.json();
     }
     newChat(cwd, text, mode) { return this._post("/api/new", { cwd, text, mode }); }
+    mkdir(path, name) { return this._post("/api/mkdir", { path, name }); }
     destroy() { if (this.es) this.es.close(); this.es = null; }
     _connect() {
       if (this.es) this.es.close();
@@ -4415,6 +4523,11 @@ ${titleEl}${wrap.outerHTML}
   const newchatCwd = document.getElementById("newchat-cwd");
   const newchatStart = document.getElementById("newchat-start");
   const newchatStartLabel = newchatStart.querySelector("span");
+  const newchatMkdirBtn = document.getElementById("newchat-mkdir");
+  const newchatMkdirRow = document.getElementById("newchat-mkdir-row");
+  const newchatMkdirName = document.getElementById("newchat-mkdir-name");
+  const newchatMkdirCreate = document.getElementById("newchat-mkdir-create");
+  const newchatMkdirCancel = document.getElementById("newchat-mkdir-cancel");
 
   let newchatCurrentDir = "";   // folder the new session will start in (cwd)
   let newchatParent = null;
@@ -4442,6 +4555,7 @@ ${titleEl}${wrap.outerHTML}
 
   async function newchatLoadDirs(path) {
     if (!source?.listDirs) return;
+    hideMkdirRow();   // navigating cancels an in-progress folder creation
     newchatDirs.innerHTML = `<div class="newchat-loading"></div>`;
     newchatDirs.firstChild.textContent = t("newchat_loading");
     let res;
@@ -4486,11 +4600,41 @@ ${titleEl}${wrap.outerHTML}
     newchatText.value = "";
     newchatMode = "default";
     renderNewchatMode();
+    hideMkdirRow();
     newchatModal.hidden = false;
     newchatLoadDirs("");   // empty → server defaults to the user's home
     newchatText.focus();
   }
-  function closeNewchat() { newchatModal.hidden = true; }
+  function closeNewchat() { newchatModal.hidden = true; hideMkdirRow(); }
+
+  // Inline "create folder" — make a fresh working dir without leaving for a
+  // file manager, then drop into it as the new session's cwd.
+  function showMkdirRow() {
+    if (!newchatCurrentDir) return;
+    newchatMkdirRow.hidden = false;
+    newchatMkdirName.value = "";
+    newchatMkdirName.focus();
+  }
+  function hideMkdirRow() {
+    newchatMkdirRow.hidden = true;
+    newchatMkdirName.value = "";
+  }
+  async function createFolder() {
+    const name = newchatMkdirName.value.trim();
+    if (!name || !newchatCurrentDir || !source?.mkdir) return;
+    newchatMkdirCreate.disabled = true;
+    setNewchatError("");
+    try {
+      const res = await source.mkdir(newchatCurrentDir, name);
+      hideMkdirRow();
+      if (res?.path) newchatLoadDirs(res.path);   // step into the new folder
+      else newchatLoadDirs(newchatCurrentDir);
+    } catch (err) {
+      setNewchatError(t("newchat_err_generic", String(err?.message || err)));
+    } finally {
+      newchatMkdirCreate.disabled = false;
+    }
+  }
 
   async function startNewchat() {
     if (newchatBusy) return;
@@ -4536,6 +4680,15 @@ ${titleEl}${wrap.outerHTML}
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); startNewchat(); }
   });
   newchatStart.addEventListener("click", startNewchat);
+  newchatMkdirBtn.addEventListener("click", () => {
+    if (newchatMkdirRow.hidden) showMkdirRow(); else hideMkdirRow();
+  });
+  newchatMkdirCreate.addEventListener("click", createFolder);
+  newchatMkdirCancel.addEventListener("click", hideMkdirRow);
+  newchatMkdirName.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); createFolder(); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); hideMkdirRow(); }
+  });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && !newchatModal.hidden) closeNewchat();
   });

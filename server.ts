@@ -1,4 +1,4 @@
-import { readdir, stat, access } from "node:fs/promises";
+import { readdir, stat, access, mkdir } from "node:fs/promises";
 import { watch, constants as fsConstants } from "node:fs";
 import { join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
 import { homedir } from "node:os";
@@ -328,7 +328,8 @@ async function processSub(sub: Sub, latest: string | null) {
 }
 
 function broadcastSessions() {
-  for (const sub of subs) send(sub.controller, "sessions", snapshot);
+  const payload = clientSnapshot();
+  for (const sub of subs) send(sub.controller, "sessions", payload);
 }
 
 async function syncFile(full: string, proj: string): Promise<boolean> {
@@ -430,6 +431,9 @@ interface Agent {
   queue: any[];                 // pending SDKUserMessages
   wake: (() => void) | null;    // resumes the input generator
   state: "working" | "idle";
+  // Sub-status while working, from the SDK's authoritative signals:
+  // "running" | "requesting" | "compacting" | "requires_action" | null.
+  activity: string | null;
   closed: boolean;
   lastActivity: number;
   lastError: string | null;
@@ -451,12 +455,44 @@ const pendingModes = new Map<string, PermMode>();
 // snapshot entry yet — keyed by session id, adopted by the watcher.
 const pendingNewAgents = new Map<string, Agent>();
 
+// Sessions started FROM the viewer ("new chat"). ONLY these get the live
+// composer. Resuming a session another process owns (VS Code / terminal) would
+// fork the conversation — two processes appending to one .jsonl, each sending
+// the API its own divergent history. We sidestep that by only ever driving
+// sessions we created. Persisted so ownership survives restarts and reaping.
+const OWNED_FILE = join(dirname(PROJECTS_DIR), ".rtl-viewer-owned.json");
+const ownedSessions = new Set<string>();
+async function loadOwned() {
+  try {
+    const arr = JSON.parse(await Bun.file(OWNED_FILE).text());
+    if (Array.isArray(arr)) for (const id of arr) if (typeof id === "string") ownedSessions.add(id);
+  } catch {}
+}
+function saveOwned() {
+  Bun.write(OWNED_FILE, JSON.stringify([...ownedSessions])).catch(err => console.error("saveOwned:", err));
+}
+function markOwned(sessionId: string) {
+  if (!sessionId || ownedSessions.has(sessionId)) return;
+  ownedSessions.add(sessionId);
+  saveOwned();
+}
+function isOwnedFile(file: string): boolean {
+  return ownedSessions.has(fileSessionId(file));
+}
+
+// Decorate the snapshot with the per-session `owned` flag the client uses to
+// decide whether to show the composer.
+function clientSnapshot() {
+  return snapshot.map(s => ({ ...s, owned: ownedSessions.has(fileSessionId(s.path)) }));
+}
+
 function modeForFile(file: string): PermMode {
   return agents.get(file)?.permissionMode ?? pendingModes.get(file) ?? "default";
 }
 function broadcastAgent(file: string, state: string, error?: string | null) {
   const mode = modeForFile(file);
-  for (const sub of subs) send(sub.controller, "agent", { file, state, error: error ?? null, mode });
+  const activity = agents.get(file)?.activity ?? null;
+  for (const sub of subs) send(sub.controller, "agent", { file, state, error: error ?? null, mode, activity });
 }
 function broadcastPerm(file: string, payload: Record<string, unknown>) {
   for (const sub of subs) send(sub.controller, "perm", { file, ...payload });
@@ -578,7 +614,7 @@ function newAgent(file: string, sessionId: string, cwd: string, mode: PermMode):
   return {
     file, sessionId, cwd, permissionMode: mode,
     q: null, queue: [], wake: null,
-    state: "idle", closed: false,
+    state: "idle", activity: null, closed: false,
     lastActivity: Date.now(), lastError: null, stderrTail: "",
     permSeq: 0, pendingPerms: new Map(), identifyResolve: null,
   };
@@ -602,9 +638,11 @@ function adoptNewAgent(agent: Agent, file: string) {
 }
 
 // Called the first time a new session reveals its id. If the .jsonl already
-// landed, adopt immediately; otherwise wait for the watcher to spot it.
+// landed, adopt immediately; otherwise wait for the watcher to spot it. This
+// only ever fires for sessions WE spawned (no resume), so the id is ours to own.
 function identifyNewAgent(agent: Agent, sessionId: string) {
   agent.sessionId = sessionId;
+  markOwned(sessionId);
   const existing = snapshot.find(s => fileSessionId(s.path) === sessionId);
   if (existing) adoptNewAgent(agent, existing.path);
   else pendingNewAgents.set(sessionId, agent);
@@ -624,15 +662,34 @@ async function runAgentLoop(agent: Agent) {
         handleStreamEvent(agent, msg.stream_event ?? msg.event);
         continue;
       }
+      // Authoritative state straight from the CLI — the reliable "is it working"
+      // signal (mirrors notifySessionStateChanged). `session_state_changed.state`
+      // is idle | running | requires_action; `status` carries compacting/requesting
+      // while running. These drive the working indicator instead of guessing from
+      // message arrival.
+      if (msg.type === "system") {
+        if (msg.subtype === "session_state_changed") {
+          if (msg.state === "idle") { agent.state = "idle"; agent.activity = null; }
+          else { agent.state = "working"; agent.activity = msg.state === "requires_action" ? "requires_action" : "running"; }
+          broadcastAgent(agent.file, agent.lastError ? "error" : agent.state, agent.lastError);
+        } else if (msg.subtype === "status" && msg.status) {
+          agent.state = "working";
+          agent.activity = msg.status; // "compacting" | "requesting"
+          broadcastAgent(agent.file, agent.lastError ? "error" : agent.state, agent.lastError);
+        }
+        continue;
+      }
       if (msg.type === "assistant" || msg.type === "user") {
         if (agent.state !== "working") {
           agent.state = "working";
+          if (!agent.activity) agent.activity = "running";
           broadcastAgent(agent.file, "working");
         }
         continue; // content reaches clients through the disk pipeline
       }
       if (msg.type === "result") {
         agent.state = "idle";
+        agent.activity = null;
         agent.lastError = msg.subtype === "success"
           ? null
           : (Array.isArray(msg.errors) && msg.errors.length ? msg.errors.join("; ") : msg.subtype);
@@ -669,6 +726,11 @@ async function getOrCreateAgent(file: string): Promise<Agent | { error: string; 
   const name = file.replace(/\\/g, "/").split("/").pop() ?? "";
   const sessionId = name.replace(/\.jsonl$/i, "");
   if (!SESSION_ID_RE.test(sessionId)) return { error: "not a resumable session", status: 422 };
+  // Only drive sessions we started — resuming one another process owns (VS Code /
+  // terminal) would fork the conversation. Such sessions are read-only here.
+  if (!ownedSessions.has(sessionId)) {
+    return { error: "read-only: this conversation was not started from the viewer", status: 403 };
+  }
 
   const promise = (async (): Promise<Agent> => {
     const cwd = await readSessionCwd(file);
@@ -788,6 +850,8 @@ async function handleMode(req: Request): Promise<Response> {
   const file = typeof body?.file === "string" ? body.file : "";
   const mode = asMode(body?.mode);
   if (!file || !mode) return Response.json({ error: "missing file or invalid mode" }, { status: 400 });
+  // Mode only applies to sessions the viewer drives.
+  if (!isOwnedFile(file)) return Response.json({ error: "read-only session" }, { status: 403 });
   const agent = agents.get(file);
   if (agent && !agent.closed) {
     // A running process must actually accept the switch. bypassPermissions on an
@@ -835,6 +899,33 @@ async function handleDirs(req: Request): Promise<Response> {
     .map(e => ({ name: e.name, path: join(target, e.name) }))
     .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
   return Response.json({ path: target, parent: parentDir(target), sep: pathSep, dirs });
+}
+
+// Create a sub-folder inside `path` (so the user can make a fresh working dir
+// from the new-chat browser without leaving for a file manager). `name` must be
+// a single safe path segment.
+async function handleMkdir(req: Request): Promise<Response> {
+  const body = await readJsonBody(req);
+  const parent = typeof body?.path === "string" ? body.path.trim() : "";
+  const name = typeof body?.name === "string" ? body.name.trim() : "";
+  if (!parent || !name) return Response.json({ error: "missing path or name" }, { status: 400 });
+  if (name === "." || name === ".." || /[\\/:*?"<>|]/.test(name)) {
+    return Response.json({ error: "invalid folder name" }, { status: 400 });
+  }
+  const base = resolvePath(parent);
+  try {
+    const st = await stat(base);
+    if (!st.isDirectory()) return Response.json({ error: "not a directory" }, { status: 400 });
+  } catch { return Response.json({ error: "parent folder does not exist" }, { status: 400 }); }
+  const full = join(base, name);
+  try {
+    await mkdir(full);
+  } catch (err: any) {
+    if (err?.code === "EEXIST") return Response.json({ error: "folder already exists" }, { status: 409 });
+    if (err?.code === "EACCES" || err?.code === "EPERM") return Response.json({ error: "permission denied" }, { status: 403 });
+    return Response.json({ error: `could not create folder: ${err?.code || err}` }, { status: 500 });
+  }
+  return Response.json({ ok: true, path: full });
 }
 
 // Start a BRAND-NEW conversation in `cwd`: spawn a fresh CLI (no resume) with
@@ -892,6 +983,7 @@ function scheduleChange(relPath: string) {
   pendingChanges.set(relPath, t);
 }
 
+await loadOwned();
 await initialScan();
 
 try {
@@ -940,7 +1032,7 @@ Bun.serve({
     }
 
     if (url.pathname === "/api/sessions") {
-      return withCors(Response.json(snapshot));
+      return withCors(Response.json(clientSnapshot()));
     }
 
     if (url.pathname === "/api/send" && req.method === "POST") {
@@ -967,6 +1059,10 @@ Bun.serve({
       return handleDirs(req).then(withCors);
     }
 
+    if (url.pathname === "/api/mkdir" && req.method === "POST") {
+      return handleMkdir(req).then(withCors);
+    }
+
     if (url.pathname === "/api/search") {
       const q = url.searchParams.get("q") ?? "";
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 60)));
@@ -988,7 +1084,7 @@ Bun.serve({
           sub.controller = c;
           subs.add(sub);
           send(c, "ready", { mode: sub.mode, pinned: sub.pinned ?? null });
-          send(c, "sessions", snapshot);
+          send(c, "sessions", clientSnapshot());
           const latest = snapshot[0]?.path ?? null;
           processSub(sub, latest)
             .then(() => {
@@ -997,7 +1093,7 @@ Bun.serve({
               const target = sub.current;
               const agent = target ? agents.get(target) : null;
               if (agent && !agent.closed) {
-                send(c, "agent", { file: agent.file, state: agent.lastError ? "error" : agent.state, error: agent.lastError, mode: agent.permissionMode });
+                send(c, "agent", { file: agent.file, state: agent.lastError ? "error" : agent.state, error: agent.lastError, mode: agent.permissionMode, activity: agent.activity });
                 for (const perm of agent.pendingPerms.values()) {
                   send(c, "perm", { file: agent.file, id: perm.id, state: "ask", tool: perm.tool, input: perm.input });
                 }
