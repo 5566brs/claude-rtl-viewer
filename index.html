@@ -940,13 +940,16 @@
      itself on the opposite side. */
   .fab-stack {
     position: fixed;
-    bottom: 18px;
+    /* --fab-bottom is set by JS to clear the composer (server mode); the 18px
+       fallback applies whenever the composer is hidden. */
+    bottom: var(--fab-bottom, 18px);
     inset-inline-start: calc(max(20px, calc((100vw - 1240px) / 2 + 20px)) + 340px);
     display: flex;
     flex-direction: column-reverse;
     gap: 8px;
     z-index: 12;
     pointer-events: none;
+    transition: bottom 160ms cubic-bezier(0.16, 1, 0.3, 1);
   }
   .fab-btn {
     pointer-events: auto;
@@ -1023,7 +1026,7 @@
     .fab-stack {
       inset-inline-start: auto;
       inset-inline-end: 14px;
-      bottom: 36px;
+      bottom: var(--fab-bottom, 36px);
     }
   }
   @media (prefers-reduced-motion: reduce) {
@@ -1420,6 +1423,204 @@
     flex: none;
   }
 
+  /* Permission-mode selector — mirrors Claude Code's Shift+Tab cycle. Click to
+     advance default → accept-edits → plan → bypass; the colour signals risk.
+     Used both in the composer and inside the new-chat modal. */
+  .mode-btn {
+    flex: none;
+    height: 40px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 11px;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1;
+    white-space: nowrap;
+    color: var(--text);
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    cursor: pointer;
+    transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+  }
+  .mode-btn::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex: none;
+  }
+  .mode-btn:hover { border-color: var(--accent); }
+  .mode-btn:focus-visible {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--focus-ring);
+  }
+  .mode-btn[data-mode="acceptEdits"] {
+    color: var(--diff-add-fg);
+    border-color: color-mix(in srgb, var(--diff-add-fg) 45%, var(--border-strong));
+  }
+  .mode-btn[data-mode="acceptEdits"]::before { background: var(--diff-add-fg); }
+  .mode-btn[data-mode="plan"] {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--border-strong));
+  }
+  .mode-btn[data-mode="plan"]::before { background: var(--accent); }
+  .mode-btn[data-mode="bypassPermissions"] {
+    color: var(--diff-del-fg);
+    border-color: color-mix(in srgb, var(--diff-del-fg) 50%, var(--border-strong));
+  }
+  .mode-btn[data-mode="bypassPermissions"]::before { background: var(--diff-del-fg); }
+  /* Shown briefly when the server refuses a switch (e.g. bypass mid-session). */
+  .mode-btn.mode-denied {
+    border-color: var(--diff-del-fg);
+    color: var(--diff-del-fg);
+    animation: mode-shake 0.4s ease;
+  }
+  @keyframes mode-shake {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(-3px); }
+    75% { transform: translateX(3px); }
+  }
+
+  /* New-chat folder browser (server mode): modal overlay + filesystem list. */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(15, 23, 42, 0.45);
+    backdrop-filter: blur(2px);
+  }
+  .modal-card {
+    width: min(560px, 100%);
+    max-height: min(80vh, 720px);
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border-strong);
+    border-radius: 14px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+  }
+  .modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  .modal-title { font-size: 15px; font-weight: 600; }
+  .newchat-path-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    padding: 12px 16px 8px;
+  }
+  .newchat-path-row input {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-size: 12.5px;
+    font-family: var(--font-mono);
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 7px 10px;
+    outline: none;
+  }
+  .newchat-path-row input:focus { border-color: var(--accent); }
+  .newchat-dirs {
+    flex: 1;
+    overflow: auto;
+    margin: 0 16px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    min-height: 120px;
+  }
+  .newchat-dir {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    font: inherit;
+    font-size: 13px;
+    text-align: start;
+    color: var(--text);
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .newchat-dir:last-child { border-bottom: none; }
+  .newchat-dir:hover { background: var(--active); }
+  .newchat-dir svg { width: 16px; height: 16px; flex: none; color: var(--muted); }
+  .newchat-dir .newchat-dir-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .newchat-empty, .newchat-loading {
+    padding: 16px;
+    font-size: 13px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .newchat-error {
+    margin: 8px 16px 0;
+    padding: 7px 10px;
+    font-size: 12.5px;
+    color: var(--diff-del-fg);
+    background: var(--diff-del-bg);
+    border-radius: 8px;
+  }
+  .newchat-footer {
+    padding: 12px 16px 16px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .newchat-mode-row { display: flex; align-items: center; gap: 8px; }
+  .newchat-mode-label { font-size: 12.5px; color: var(--muted); }
+  #newchat-text {
+    resize: none;
+    font: inherit;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text);
+    background: var(--panel-2);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 9px 12px;
+    max-height: 160px;
+    outline: none;
+  }
+  #newchat-text:focus { border-color: var(--accent); }
+  .newchat-actions {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .newchat-cwd {
+    flex: 1;
+    min-width: 0;
+    font-size: 11.5px;
+    font-family: var(--font-mono);
+    color: var(--muted);
+    direction: ltr;
+    text-align: start;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .newchat-actions .setup-btn { flex: none; }
+
   /* Permission prompt — Claude (live process) is asking to run a tool. */
   .perm-card {
     position: sticky;
@@ -1527,6 +1728,7 @@
     .msg.live,
     #page-credit,
     .fab-stack,
+    #newchat-modal,
     #setup,
     #export-bar,
     .export-actions,
@@ -1649,6 +1851,7 @@
     </div>
     <div id="composer-status" class="composer-status" hidden></div>
     <form id="composer" class="composer" hidden>
+      <button id="composer-mode" class="mode-btn" type="button" data-mode="default"></button>
       <textarea id="composer-input" rows="1" dir="auto" data-i18n-ph="composer_ph"></textarea>
       <button id="composer-stop" class="icon-btn composer-send" type="button" data-icon="squareStop" data-i18n-tt="tt_composer_stop" hidden></button>
       <button id="composer-send" class="icon-btn is-primary composer-send" type="submit" data-icon="send" data-i18n-tt="tt_composer_send"></button>
@@ -1659,6 +1862,7 @@
     <div class="sidebar-header">
       <span class="sidebar-title" data-i18n="sidebar_title"></span>
       <div class="header-actions">
+        <button id="new-chat-btn" class="icon-btn is-sm" type="button" data-icon="messageSquarePlus" data-i18n-tt="tt_new_chat" hidden></button>
         <button id="group-btn" class="icon-btn is-sm" type="button" data-icon="folderTree" aria-pressed="true"></button>
         <button id="collapse-all-btn" class="icon-btn is-sm" type="button" data-icon="foldVertical" data-i18n-tt="tt_collapse" hidden></button>
         <button id="latest-btn" class="icon-btn is-sm is-primary" type="button" data-icon="chevronsDown" data-i18n-tt="tt_latest" hidden></button>
@@ -1679,6 +1883,32 @@
   <button id="fab-bottom" class="fab-btn" type="button" data-icon="arrowDownToLine" data-i18n-tt="tt_fab_bottom" hidden></button>
   <button id="fab-top" class="fab-btn" type="button" data-icon="arrowUpToLine" data-i18n-tt="tt_fab_top" hidden></button>
   <button id="fab-menu" class="fab-btn fab-menu" type="button" data-icon="list" data-i18n-tt="tt_fab_menu" hidden></button>
+</div>
+<div id="newchat-modal" class="modal-overlay" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <div class="modal-header">
+      <span class="modal-title" data-i18n="newchat_title"></span>
+      <button id="newchat-close" class="icon-btn is-sm" type="button" data-icon="x"></button>
+    </div>
+    <div class="newchat-path-row">
+      <button id="newchat-up" class="icon-btn is-sm" type="button" data-icon="arrowUp" data-i18n-tt="newchat_up"></button>
+      <input id="newchat-path" type="text" dir="ltr" spellcheck="false" data-i18n-ph="newchat_path_ph" />
+      <button id="newchat-go" class="icon-btn is-sm" type="button" data-icon="chevronRight" data-i18n-tt="newchat_go"></button>
+    </div>
+    <div id="newchat-dirs" class="newchat-dirs"></div>
+    <div id="newchat-error" class="newchat-error" hidden></div>
+    <div class="newchat-footer">
+      <div class="newchat-mode-row">
+        <span class="newchat-mode-label" data-i18n="newchat_mode_label"></span>
+        <button id="newchat-mode" class="mode-btn" type="button" data-mode="default"></button>
+      </div>
+      <textarea id="newchat-text" rows="2" dir="auto" data-i18n-ph="newchat_text_ph"></textarea>
+      <div class="newchat-actions">
+        <span id="newchat-cwd" class="newchat-cwd"></span>
+        <button id="newchat-start" class="setup-btn primary" type="button"><span data-i18n="newchat_start"></span></button>
+      </div>
+    </div>
+  </div>
 </div>
 <div id="page-credit">
   <a href="https://github.com/5566brs/claude-rtl-viewer" target="_blank" rel="noopener noreferrer">github.com/5566brs/claude-rtl-viewer</a>
@@ -1742,6 +1972,11 @@
     arrowUpToLine:   _ico('<path d="M5 3h14"/><path d="m18 13-6-6-6 6"/><path d="M12 7v14"/>'),
     arrowDownToLine: _ico('<path d="M12 17V3"/><path d="m6 11 6 6 6-6"/><path d="M19 21H5"/>'),
     list:            _ico('<line x1="8" x2="21" y1="6" y2="6"/><line x1="8" x2="21" y1="12" y2="12"/><line x1="8" x2="21" y1="18" y2="18"/><line x1="3" x2="3.01" y1="6" y2="6"/><line x1="3" x2="3.01" y1="12" y2="12"/><line x1="3" x2="3.01" y1="18" y2="18"/>'),
+
+    // new chat / folder browser
+    messageSquarePlus: _ico('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="9" x2="15" y1="10" y2="10"/><line x1="12" x2="12" y1="7" y2="13"/>'),
+    arrowUp:           _ico('<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>'),
+    folder:            _ico('<path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/>'),
   };
 
   // Inflate any [data-icon="name"] elements with their SVG, runs once at start.
@@ -1852,6 +2087,27 @@
       composer_sending: "שולח…",
       composer_running: "Claude עובד…",
       composer_error: (msg) => `שגיאה: ${msg}`,
+      // permission-mode selector (Claude Code's Shift+Tab cycle)
+      mode_default: "רגיל",
+      mode_acceptEdits: "אישור עריכות",
+      mode_plan: "תכנון",
+      mode_bypassPermissions: "ללא אישורים",
+      tt_composer_mode: (label) => `מצב הרשאות: ${label} — לחץ להחלפה`,
+      // new chat (server mode only)
+      tt_new_chat: "צ'אט חדש בתיקייה",
+      newchat_title: "צ'אט חדש",
+      newchat_path_ph: "נתיב לתיקייה…",
+      newchat_up: "תיקיית הורה",
+      newchat_go: "עבור לנתיב",
+      newchat_loading: "טוען…",
+      newchat_empty_dir: "אין תת-תיקיות כאן",
+      newchat_mode_label: "מצב הרשאות:",
+      newchat_text_ph: "ההודעה הראשונה לצ'אט החדש…",
+      newchat_cwd: (p) => `יתחיל ב: ${p}`,
+      newchat_start: "התחל צ'אט",
+      newchat_starting: "מתחיל…",
+      newchat_err_no_text: "כתוב הודעה ראשונה",
+      newchat_err_generic: (msg) => `שגיאה: ${msg}`,
       live_tool: (name) => `מריץ ${name}…`,
       live_writing: "כותב…",
       perm_title: "Claude מבקש אישור להריץ:",
@@ -1938,6 +2194,27 @@
       composer_sending: "Sending…",
       composer_running: "Claude is working…",
       composer_error: (msg) => `Error: ${msg}`,
+      // permission-mode selector (Claude Code's Shift+Tab cycle)
+      mode_default: "Default",
+      mode_acceptEdits: "Accept edits",
+      mode_plan: "Plan",
+      mode_bypassPermissions: "Bypass",
+      tt_composer_mode: (label) => `Permission mode: ${label} — click to cycle`,
+      // new chat (server mode only)
+      tt_new_chat: "New chat in a folder",
+      newchat_title: "New chat",
+      newchat_path_ph: "Folder path…",
+      newchat_up: "Parent folder",
+      newchat_go: "Go to path",
+      newchat_loading: "Loading…",
+      newchat_empty_dir: "No sub-folders here",
+      newchat_mode_label: "Permission mode:",
+      newchat_text_ph: "First message for the new chat…",
+      newchat_cwd: (p) => `Will start in: ${p}`,
+      newchat_start: "Start chat",
+      newchat_starting: "Starting…",
+      newchat_err_no_text: "Write a first message",
+      newchat_err_generic: (msg) => `Error: ${msg}`,
       live_tool: (name) => `Running ${name}…`,
       live_writing: "Writing…",
       perm_title: "Claude is asking permission to run:",
@@ -3120,6 +3397,7 @@
   const composerSendBtn = document.getElementById("composer-send");
   const composerStopBtn = document.getElementById("composer-stop");
   const composerStatusEl = document.getElementById("composer-status");
+  const composerModeBtn = document.getElementById("composer-mode");
   const permCardEl = document.getElementById("perm-card");
   const permToolEl = document.getElementById("perm-tool");
   const permInputEl = document.getElementById("perm-input");
@@ -3127,8 +3405,52 @@
   const permDenyBtn = document.getElementById("perm-deny");
 
   const agentStates = new Map();   // file -> { state, error }
+  const agentModes = new Map();    // file -> permission mode (default if absent)
   const pendingPerms = new Map();  // perm id -> { file, id, tool, input }
   let sendingFile = null;          // POST in flight / awaiting first agent event
+
+  // Permission modes, in the order the button cycles them (mirrors Claude
+  // Code's Shift+Tab). The server validates against the same set.
+  const MODES = ["default", "acceptEdits", "plan", "bypassPermissions"];
+  function modeFor(file) { return (file && agentModes.get(file)) || "default"; }
+  function renderModeBtn() {
+    if (!composerModeBtn) return;
+    const m = modeFor(activeFile);
+    composerModeBtn.dataset.mode = m;
+    const label = t("mode_" + m);
+    composerModeBtn.textContent = label;
+    composerModeBtn.setAttribute("data-tooltip", t("tt_composer_mode", label));
+  }
+  let modeFlashTimer = null;
+  // The SDK refuses some switches (notably bypass on an already-running session).
+  // Briefly surface the reason on the button, then restore its normal tooltip.
+  function flashModeError(msg) {
+    if (!composerModeBtn) return;
+    composerModeBtn.classList.add("mode-denied");
+    if (msg) composerModeBtn.setAttribute("data-tooltip", msg);
+    clearTimeout(modeFlashTimer);
+    modeFlashTimer = setTimeout(() => {
+      composerModeBtn.classList.remove("mode-denied");
+      renderModeBtn();
+    }, 2200);
+  }
+  function cycleMode() {
+    if (!activeFile) return;
+    const file = activeFile;
+    const prev = modeFor(file);
+    const next = MODES[(MODES.indexOf(prev) + 1) % MODES.length];
+    agentModes.set(file, next);
+    renderModeBtn();
+    // Apply to the live process (or record for the next spawn). On refusal,
+    // revert so the button never claims a mode the agent isn't actually in.
+    source?.setMode?.(file, next).catch(err => {
+      agentModes.set(file, prev);
+      if (file === activeFile) { renderModeBtn(); flashModeError(String(err?.message || err)); }
+      console.error("setMode:", err);
+    });
+  }
+  if (composerModeBtn) composerModeBtn.addEventListener("click", cycleMode);
+  onLangChange(renderModeBtn);
 
   function renderComposerStatus() {
     const a = activeFile ? agentStates.get(activeFile) : null;
@@ -3142,6 +3464,7 @@
     composerStatusEl.classList.toggle("error", isError);
     composerStatusEl.classList.toggle("running", !!text && !isError);
     composerStopBtn.hidden = a?.state !== "working";
+    updateFabOffset();
   }
   onLangChange(renderComposerStatus);
 
@@ -3153,15 +3476,16 @@
     if (!perm) {
       permCardEl.hidden = true;
       permCardEl.dataset.permId = "";
-      return;
+    } else {
+      permCardEl.dataset.permId = perm.id;
+      permToolEl.textContent = perm.tool;
+      let preview = "";
+      try { preview = JSON.stringify(perm.input, null, 2) ?? ""; } catch {}
+      if (preview.length > 2000) preview = preview.slice(0, 2000) + "…";
+      permInputEl.textContent = preview;
+      permCardEl.hidden = false;
     }
-    permCardEl.dataset.permId = perm.id;
-    permToolEl.textContent = perm.tool;
-    let preview = "";
-    try { preview = JSON.stringify(perm.input, null, 2) ?? ""; } catch {}
-    if (preview.length > 2000) preview = preview.slice(0, 2000) + "…";
-    permInputEl.textContent = preview;
-    permCardEl.hidden = false;
+    updateFabOffset();
   }
 
   function updateComposerVisibility() {
@@ -3169,12 +3493,19 @@
     if (composerEl.hidden) removeLiveMsg();
     renderComposerStatus();
     renderPermCard();
+    renderModeBtn();
+    updateNewChatBtn();
   }
 
   function applyAgentState(p) {
     if (!p?.file) return;
     if (p.state === "gone") agentStates.delete(p.file);
     else agentStates.set(p.file, { state: p.state, error: p.error || null });
+    // The server echoes the conversation's permission mode on every agent event.
+    if (p.mode && MODES.includes(p.mode)) {
+      agentModes.set(p.file, p.mode);
+      if (p.file === activeFile) renderModeBtn();
+    }
     if (sendingFile === p.file) sendingFile = null;
     if (p.file === activeFile && p.state !== "working") removeLiveMsg();
     renderComposerStatus();
@@ -3260,7 +3591,7 @@
     sendingFile = file;
     renderComposerStatus();
     try {
-      await source.sendMessage(file, text);
+      await source.sendMessage(file, text, modeFor(file));
       composerInput.value = "";
       autoGrowComposer();
     } catch (err) {
@@ -3617,20 +3948,23 @@ ${titleEl}${wrap.outerHTML}
         headers: { "content-type": "application/json" },
         body: JSON.stringify(body),
       });
-      if (!res.ok) {
-        let msg = `HTTP ${res.status}`;
-        try {
-          const j = await res.json();
-          if (j?.error) msg = j.error;
-        } catch {}
-        throw new Error(msg);
-      }
+      let data = null;
+      try { data = await res.json(); } catch {}
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      return data;
     }
-    sendMessage(file, text) { return this._post("/api/send", { file, text }); }
+    sendMessage(file, text, mode) { return this._post("/api/send", { file, text, mode }); }
     interrupt(file) { return this._post("/api/interrupt", { file }); }
+    setMode(file, mode) { return this._post("/api/mode", { file, mode }); }
     respondPermission(file, id, allow, message) {
       return this._post("/api/permission", { file, id, allow, message });
     }
+    // New chat: browse the server's filesystem and spawn a fresh session.
+    async listDirs(path) {
+      const res = await fetch(`${this.baseUrl}/api/dirs?path=${encodeURIComponent(path || "")}`, { cache: "no-store" });
+      return await res.json();
+    }
+    newChat(cwd, text, mode) { return this._post("/api/new", { cwd, text, mode }); }
     destroy() { if (this.es) this.es.close(); this.es = null; }
     _connect() {
       if (this.es) this.es.close();
@@ -4063,6 +4397,154 @@ ${titleEl}${wrap.outerHTML}
     finally { clearTimeout(timer); }
   }
 
+  // ---------- new chat (server mode): folder browser → fresh session ----------
+  // The browser can't hand the server an absolute path (showDirectoryPicker only
+  // exposes a handle), so the modal walks the real filesystem via /api/dirs and
+  // the chosen directory becomes the new session's cwd. Disk stays canonical —
+  // once the server spawns the session it flows through the watcher like any other.
+  const newChatBtn = document.getElementById("new-chat-btn");
+  const newchatModal = document.getElementById("newchat-modal");
+  const newchatClose = document.getElementById("newchat-close");
+  const newchatUp = document.getElementById("newchat-up");
+  const newchatPath = document.getElementById("newchat-path");
+  const newchatGo = document.getElementById("newchat-go");
+  const newchatDirs = document.getElementById("newchat-dirs");
+  const newchatError = document.getElementById("newchat-error");
+  const newchatModeBtn = document.getElementById("newchat-mode");
+  const newchatText = document.getElementById("newchat-text");
+  const newchatCwd = document.getElementById("newchat-cwd");
+  const newchatStart = document.getElementById("newchat-start");
+  const newchatStartLabel = newchatStart.querySelector("span");
+
+  let newchatCurrentDir = "";   // folder the new session will start in (cwd)
+  let newchatParent = null;
+  let newchatMode = "default";
+  let newchatBusy = false;
+
+  // The + button only makes sense when the source can spawn processes (server).
+  function updateNewChatBtn() {
+    if (newChatBtn) newChatBtn.hidden = !(source && source.canSend);
+  }
+
+  function renderNewchatMode() {
+    newchatModeBtn.dataset.mode = newchatMode;
+    const label = t("mode_" + newchatMode);
+    newchatModeBtn.textContent = label;
+    newchatModeBtn.setAttribute("data-tooltip", t("tt_composer_mode", label));
+  }
+  function setNewchatError(msg) {
+    newchatError.textContent = msg || "";
+    newchatError.hidden = !msg;
+  }
+  function renderNewchatCwd() {
+    newchatCwd.textContent = newchatCurrentDir ? t("newchat_cwd", newchatCurrentDir) : "";
+  }
+
+  async function newchatLoadDirs(path) {
+    if (!source?.listDirs) return;
+    newchatDirs.innerHTML = `<div class="newchat-loading"></div>`;
+    newchatDirs.firstChild.textContent = t("newchat_loading");
+    let res;
+    try { res = await source.listDirs(path); }
+    catch (err) { setNewchatError(String(err?.message || err)); newchatDirs.innerHTML = ""; return; }
+    newchatCurrentDir = res.path || path || "";
+    newchatParent = res.parent || null;
+    newchatPath.value = newchatCurrentDir;
+    renderNewchatCwd();
+    newchatUp.disabled = !newchatParent;
+    setNewchatError(res.error || "");
+    newchatDirs.innerHTML = "";
+    const dirs = Array.isArray(res.dirs) ? res.dirs : [];
+    if (!dirs.length) {
+      const empty = document.createElement("div");
+      empty.className = "newchat-empty";
+      empty.textContent = t("newchat_empty_dir");
+      newchatDirs.appendChild(empty);
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const d of dirs) {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "newchat-dir";
+      btn.innerHTML = ICONS.folder;
+      const name = document.createElement("span");
+      name.className = "newchat-dir-name";
+      name.dir = "ltr";
+      name.textContent = d.name;
+      btn.appendChild(name);
+      btn.addEventListener("click", () => newchatLoadDirs(d.path));
+      frag.appendChild(btn);
+    }
+    newchatDirs.appendChild(frag);
+    newchatDirs.scrollTop = 0;
+  }
+
+  function openNewchat() {
+    if (!source?.canSend) return;
+    setNewchatError("");
+    newchatText.value = "";
+    newchatMode = "default";
+    renderNewchatMode();
+    newchatModal.hidden = false;
+    newchatLoadDirs("");   // empty → server defaults to the user's home
+    newchatText.focus();
+  }
+  function closeNewchat() { newchatModal.hidden = true; }
+
+  async function startNewchat() {
+    if (newchatBusy) return;
+    const text = newchatText.value.trim();
+    if (!text) { setNewchatError(t("newchat_err_no_text")); newchatText.focus(); return; }
+    if (!newchatCurrentDir) { setNewchatError(t("newchat_err_generic", "no folder")); return; }
+    newchatBusy = true;
+    newchatStart.disabled = true;
+    newchatStartLabel.textContent = t("newchat_starting");
+    setNewchatError("");
+    try {
+      const res = await source.newChat(newchatCurrentDir, text, newchatMode);
+      if (res?.file) {
+        agentModes.set(res.file, newchatMode);
+        closeNewchat();
+        pinTo(res.file);
+      } else {
+        setNewchatError(t("newchat_err_generic", "no file returned"));
+      }
+    } catch (err) {
+      setNewchatError(t("newchat_err_generic", String(err?.message || err)));
+    } finally {
+      newchatBusy = false;
+      newchatStart.disabled = false;
+      newchatStartLabel.textContent = t("newchat_start");
+    }
+  }
+
+  if (newChatBtn) newChatBtn.addEventListener("click", openNewchat);
+  newchatClose.addEventListener("click", closeNewchat);
+  newchatModal.addEventListener("click", (e) => { if (e.target === newchatModal) closeNewchat(); });
+  newchatUp.addEventListener("click", () => { if (newchatParent) newchatLoadDirs(newchatParent); });
+  newchatGo.addEventListener("click", () => newchatLoadDirs(newchatPath.value.trim()));
+  newchatPath.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { e.preventDefault(); newchatLoadDirs(newchatPath.value.trim()); }
+  });
+  newchatModeBtn.addEventListener("click", () => {
+    newchatMode = MODES[(MODES.indexOf(newchatMode) + 1) % MODES.length];
+    renderNewchatMode();
+  });
+  newchatText.addEventListener("keydown", (e) => {
+    // Ctrl/Cmd+Enter starts the chat; plain Enter inserts a newline here.
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); startNewchat(); }
+  });
+  newchatStart.addEventListener("click", startNewchat);
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !newchatModal.hidden) closeNewchat();
+  });
+  onLangChange(() => {
+    if (newchatModal.hidden) return;
+    renderNewchatMode();
+    renderNewchatCwd();
+  });
+
   function startSource(newSource) {
     if (source) source.destroy();
     source = newSource;
@@ -4073,6 +4555,7 @@ ${titleEl}${wrap.outerHTML}
     emptyEl.style.display = "block";
     paintSidebar();
     setStatus("", "");
+    updateNewChatBtn();
     if (mode === "pinned" && pinnedFile) source.setPinned?.(pinnedFile);
     source.start();
   }
@@ -4288,6 +4771,29 @@ ${titleEl}${wrap.outerHTML}
   const mobileMq = window.matchMedia("(max-width: 880px)");
   const SCROLL_THRESHOLD = 240; // ignore tiny scrolls so the FABs don't flicker
 
+  // Keep the FAB stack clear of the composer (server mode only). The composer
+  // is sticky at the viewport bottom and can grow as the textarea wraps, and a
+  // status pill / permission card may stack above it — so measure the topmost
+  // of those docked elements and lift the FABs just above it. With no composer
+  // (folder mode, or no active session) the override is cleared and the CSS
+  // fallback (18px / 36px mobile) applies. Only matters while the FABs show,
+  // which is exactly when the page is scrollable and the composer is sticky.
+  function updateFabOffset() {
+    if (!composerEl || composerEl.hidden) {
+      document.documentElement.style.removeProperty("--fab-bottom");
+      return;
+    }
+    let topMost = window.innerHeight;
+    for (const el of [composerEl, composerStatusEl, permCardEl]) {
+      if (el && !el.hidden) {
+        const r = el.getBoundingClientRect();
+        if (r.height > 0) topMost = Math.min(topMost, r.top);
+      }
+    }
+    const offset = Math.max(18, Math.round(window.innerHeight - topMost) + 10);
+    document.documentElement.style.setProperty("--fab-bottom", offset + "px");
+  }
+
   // rAF-driven smooth scroll. Native `window.scrollTo({behavior:"smooth"})`
   // is fragile here for two reasons: it respects prefers-reduced-motion (so
   // it snaps when that's set), and — more importantly — Chromium aborts the
@@ -4385,6 +4891,7 @@ ${titleEl}${wrap.outerHTML}
     // and only when we're in the upper half (so it doesn't overlap the other
     // FABs once the user is already at/near the sidebar).
     setFabHidden(fabMenuBtn, !mobileMq.matches || y > max * 0.55);
+    updateFabOffset();
   }
 
   fabTopBtn.addEventListener("click", () => smoothScrollTo(0));
@@ -4404,6 +4911,9 @@ ${titleEl}${wrap.outerHTML}
   // and applyAppend.
   if (typeof ResizeObserver !== "undefined") {
     new ResizeObserver(() => updateFabs()).observe(document.getElementById("messages"));
+    // The composer grows as the textarea wraps; track it so the FABs ride just
+    // above its top edge instead of overlapping a multi-line prompt.
+    if (composerEl) new ResizeObserver(() => updateFabOffset()).observe(composerEl);
   }
   updateFabs();
 </script>

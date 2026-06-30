@@ -1,6 +1,6 @@
-import { readdir, stat } from "node:fs/promises";
-import { watch } from "node:fs";
-import { join } from "node:path";
+import { readdir, stat, access } from "node:fs/promises";
+import { watch, constants as fsConstants } from "node:fs";
+import { join, dirname, resolve as resolvePath, sep as pathSep } from "node:path";
 import { homedir } from "node:os";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
@@ -365,6 +365,11 @@ async function handleChange(relPath: string) {
 
   if (changed) broadcastSessions();
 
+  // A just-spawned "new chat" session writing its first lines — bind the
+  // waiting agent to this file so /api/new can return and routing kicks in.
+  const pendingNew = pendingNewAgents.get(fileSessionId(full));
+  if (pendingNew) adoptNewAgent(pendingNew, full);
+
   for (const sub of subs) {
     const target = sub.mode === "latest" ? latest : sub.pinned ?? null;
     const isAffected =
@@ -395,6 +400,18 @@ async function handleChange(relPath: string) {
 const SESSION_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const AGENT_IDLE_REAP_MS = 30 * 60 * 1000;  // close idle processes after 30 min
 const PERM_TIMEOUT_MS = 10 * 60 * 1000;     // auto-deny unanswered prompts
+// How long /api/new waits for the fresh CLI process to reveal its session id
+// (and for the .jsonl to land so we can hand the client a file to pin to).
+const NEW_SESSION_IDENTIFY_MS = 25 * 1000;
+
+// Permission modes we surface to the viewer — the same cycle Claude Code's
+// Shift+Tab walks. `query()`'s options.permissionMode and Query.setPermissionMode
+// both accept these. (`dontAsk`/`auto` exist in the SDK but aren't exposed here.)
+type PermMode = "default" | "acceptEdits" | "plan" | "bypassPermissions";
+const VALID_MODES = new Set<PermMode>(["default", "acceptEdits", "plan", "bypassPermissions"]);
+function asMode(v: unknown): PermMode | null {
+  return typeof v === "string" && VALID_MODES.has(v as PermMode) ? (v as PermMode) : null;
+}
 
 interface PendingPerm {
   id: string;
@@ -405,9 +422,10 @@ interface PendingPerm {
 }
 
 interface Agent {
-  file: string;
-  sessionId: string;
+  file: string;                 // "" until a new session is identified
+  sessionId: string;            // "" until a new session is identified
   cwd: string;
+  permissionMode: PermMode;
   q: any;                       // SDK Query (AsyncGenerator + control methods)
   queue: any[];                 // pending SDKUserMessages
   wake: (() => void) | null;    // resumes the input generator
@@ -418,13 +436,27 @@ interface Agent {
   stderrTail: string;
   permSeq: number;
   pendingPerms: Map<string, PendingPerm>;
+  // For freshly-spawned sessions: resolves once the session id + on-disk file
+  // are known, so /api/new can hand the client a file to pin to.
+  identifyResolve: ((file: string | null) => void) | null;
 }
 
 const agents = new Map<string, Agent>();
 const startingAgents = new Map<string, Promise<Agent>>();
+// Desired permission mode per session file, set by the viewer. Read at agent
+// creation and applied live to a running agent. Survives reaping so a re-spawn
+// remembers the user's last choice.
+const pendingModes = new Map<string, PermMode>();
+// Fresh sessions whose id is known but whose .jsonl hasn't been matched to a
+// snapshot entry yet — keyed by session id, adopted by the watcher.
+const pendingNewAgents = new Map<string, Agent>();
 
+function modeForFile(file: string): PermMode {
+  return agents.get(file)?.permissionMode ?? pendingModes.get(file) ?? "default";
+}
 function broadcastAgent(file: string, state: string, error?: string | null) {
-  for (const sub of subs) send(sub.controller, "agent", { file, state, error: error ?? null });
+  const mode = modeForFile(file);
+  for (const sub of subs) send(sub.controller, "agent", { file, state, error: error ?? null, mode });
 }
 function broadcastPerm(file: string, payload: Record<string, unknown>) {
   for (const sub of subs) send(sub.controller, "perm", { file, ...payload });
@@ -516,10 +548,77 @@ function handleStreamEvent(agent: Agent, ev: any) {
   }
 }
 
+// The session id is the .jsonl's basename; the watcher hands us full paths.
+function fileSessionId(path: string): string {
+  const name = path.replace(/\\/g, "/").split("/").pop() ?? "";
+  return name.replace(/\.jsonl$/i, "");
+}
+
+// Build the SDK Query for an agent and start consuming it. `resume` is the
+// session id for an existing conversation; omit it to spawn a brand-new session
+// (the CLI mints a fresh id and writes a new .jsonl under PROJECTS_DIR).
+function startAgentQuery(agent: Agent, resume?: string) {
+  agent.q = query({
+    prompt: agentInput(agent),
+    options: {
+      ...(resume ? { resume } : {}),
+      cwd: agent.cwd,
+      executable: "bun",
+      includePartialMessages: true,
+      permissionMode: agent.permissionMode,
+      stderr: (d: string) => { agent.stderrTail = (agent.stderrTail + d).slice(-2000); },
+      canUseTool: (tool: string, input: Record<string, unknown>, opts: any) =>
+        handlePermissionAsk(agent, tool, input, opts),
+    },
+  });
+  runAgentLoop(agent);
+}
+
+function newAgent(file: string, sessionId: string, cwd: string, mode: PermMode): Agent {
+  return {
+    file, sessionId, cwd, permissionMode: mode,
+    q: null, queue: [], wake: null,
+    state: "idle", closed: false,
+    lastActivity: Date.now(), lastError: null, stderrTail: "",
+    permSeq: 0, pendingPerms: new Map(), identifyResolve: null,
+  };
+}
+
+// A fresh session's .jsonl has appeared (or was already in the snapshot): bind
+// the agent to its file, register it for routing, and release /api/new.
+function adoptNewAgent(agent: Agent, file: string) {
+  if (agent.file === file) return;
+  agent.file = file;
+  agents.set(file, agent);
+  pendingNewAgents.delete(agent.sessionId);
+  if (agent.permissionMode !== "default") pendingModes.set(file, agent.permissionMode);
+  if (agent.identifyResolve) { const r = agent.identifyResolve; agent.identifyResolve = null; r(file); }
+  // Now that the file is known, surface current state + any prompts that fired
+  // before identification to whichever sub ends up pinned to this file.
+  broadcastAgent(file, agent.lastError ? "error" : agent.state, agent.lastError);
+  for (const perm of agent.pendingPerms.values()) {
+    if (!perm.done) broadcastPerm(file, { id: perm.id, state: "ask", tool: perm.tool, input: perm.input });
+  }
+}
+
+// Called the first time a new session reveals its id. If the .jsonl already
+// landed, adopt immediately; otherwise wait for the watcher to spot it.
+function identifyNewAgent(agent: Agent, sessionId: string) {
+  agent.sessionId = sessionId;
+  const existing = snapshot.find(s => fileSessionId(s.path) === sessionId);
+  if (existing) adoptNewAgent(agent, existing.path);
+  else pendingNewAgents.set(sessionId, agent);
+}
+
 async function runAgentLoop(agent: Agent) {
   try {
     for await (const msg of agent.q) {
       agent.lastActivity = Date.now();
+      // A freshly-spawned session announces its id on the first message of any
+      // type; capture it so the watcher can bind this agent to its .jsonl.
+      if (!agent.sessionId && typeof msg.session_id === "string" && msg.session_id) {
+        identifyNewAgent(agent, msg.session_id);
+      }
       if (msg.type === "stream_event" || msg.type === "partial_assistant") {
         // field name differs across SDK versions: `event` vs `stream_event`
         handleStreamEvent(agent, msg.stream_event ?? msg.event);
@@ -553,7 +652,10 @@ async function runAgentLoop(agent: Agent) {
     for (const perm of [...agent.pendingPerms.values()]) {
       resolvePerm(agent, perm.id, false, "agent closed");
     }
-    if (agents.get(agent.file) === agent) agents.delete(agent.file);
+    if (agent.sessionId) pendingNewAgents.delete(agent.sessionId);
+    // Unblock a still-waiting /api/new with whatever file we managed to learn.
+    if (agent.identifyResolve) { const r = agent.identifyResolve; agent.identifyResolve = null; r(agent.file || null); }
+    if (agent.file && agents.get(agent.file) === agent) agents.delete(agent.file);
   }
 }
 
@@ -572,28 +674,9 @@ async function getOrCreateAgent(file: string): Promise<Agent | { error: string; 
     const cwd = await readSessionCwd(file);
     if (!cwd) throw Object.assign(new Error("session has no cwd record"), { status: 422 });
 
-    const agent: Agent = {
-      file, sessionId, cwd,
-      q: null, queue: [], wake: null,
-      state: "idle", closed: false,
-      lastActivity: Date.now(), lastError: null, stderrTail: "",
-      permSeq: 0, pendingPerms: new Map(),
-    };
-    agent.q = query({
-      prompt: agentInput(agent),
-      options: {
-        resume: sessionId,
-        cwd,
-        executable: "bun",
-        includePartialMessages: true,
-        permissionMode: "default",
-        stderr: (d: string) => { agent.stderrTail = (agent.stderrTail + d).slice(-2000); },
-        canUseTool: (tool: string, input: Record<string, unknown>, opts: any) =>
-          handlePermissionAsk(agent, tool, input, opts),
-      },
-    });
+    const agent = newAgent(file, sessionId, cwd, pendingModes.get(file) ?? "default");
     agents.set(file, agent);
-    runAgentLoop(agent);
+    startAgentQuery(agent, sessionId);
     return agent;
   })();
 
@@ -627,11 +710,26 @@ async function readJsonBody(req: Request): Promise<any | null> {
   try { return await req.json(); } catch { return null; }
 }
 
+// Apply a mode to a running process. Throws if the SDK refuses (e.g. switching
+// an already-running session to bypassPermissions, which the CLI only allows
+// when launched with --dangerously-skip-permissions) — callers decide whether
+// that's fatal. permissionMode is only updated once the switch actually takes.
+async function applyMode(agent: Agent, mode: PermMode): Promise<void> {
+  if (agent.permissionMode === mode) return;
+  await agent.q.setPermissionMode(mode);
+  agent.permissionMode = mode;
+}
+
 async function handleSend(req: Request): Promise<Response> {
   const body = await readJsonBody(req);
   const file = typeof body?.file === "string" ? body.file : "";
   const text = typeof body?.text === "string" ? body.text.trim() : "";
   if (!file || !text) return Response.json({ error: "missing file or text" }, { status: 400 });
+
+  // Honor a mode chosen alongside the message — recorded before creation so a
+  // fresh agent spawns with it, and applied live to an existing one.
+  const reqMode = asMode(body?.mode);
+  if (reqMode) pendingModes.set(file, reqMode);
 
   const agent = await getOrCreateAgent(file);
   if (!(agent as Agent).q) {
@@ -639,6 +737,9 @@ async function handleSend(req: Request): Promise<Response> {
     return Response.json({ error: e.error }, { status: e.status });
   }
   const a = agent as Agent;
+  // Best-effort: if the switch is refused (e.g. bypass on a running session) the
+  // message still goes through in the agent's current mode — don't fail the send.
+  if (reqMode) { try { await applyMode(a, reqMode); } catch (err) { console.error("applyMode (send):", err); } }
   a.queue.push({
     type: "user",
     message: { role: "user", content: [{ type: "text", text }] },
@@ -677,6 +778,107 @@ async function handleInterrupt(req: Request): Promise<Response> {
   }
   agent.lastActivity = Date.now();
   return Response.json({ ok: true });
+}
+
+// Set the permission mode for a conversation. Recorded for the next spawn and
+// applied live if a process is already running. No agent is created here —
+// toggling the mode shouldn't spin up a CLI on its own.
+async function handleMode(req: Request): Promise<Response> {
+  const body = await readJsonBody(req);
+  const file = typeof body?.file === "string" ? body.file : "";
+  const mode = asMode(body?.mode);
+  if (!file || !mode) return Response.json({ error: "missing file or invalid mode" }, { status: 400 });
+  const agent = agents.get(file);
+  if (agent && !agent.closed) {
+    // A running process must actually accept the switch. bypassPermissions on an
+    // already-running session is refused by the CLI — report it so the viewer can
+    // revert the button instead of showing a mode the agent isn't really in.
+    try { await applyMode(agent, mode); }
+    catch (err) {
+      return Response.json({ error: String((err as any)?.message || err), mode: agent.permissionMode }, { status: 409 });
+    }
+    pendingModes.set(file, mode);
+    agent.lastActivity = Date.now();
+    broadcastAgent(file, agent.lastError ? "error" : agent.state, agent.lastError);
+    return Response.json({ ok: true, mode });
+  }
+  // No live process yet — record the choice; the next spawn launches with it
+  // (bypassPermissions works fine when set at launch, only not mid-session).
+  pendingModes.set(file, mode);
+  return Response.json({ ok: true, mode });
+}
+
+function parentDir(p: string): string | null {
+  const up = dirname(p);
+  return up && up !== p ? up : null;
+}
+
+// Folder browser for "new chat": list the sub-directories of `path` (defaults
+// to the user's home) so the viewer can walk the real filesystem and pick a
+// working directory. Errors come back 200 with an `error` field + the resolved
+// path so the modal can show the message and still offer the parent to go back.
+async function handleDirs(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const raw = (url.searchParams.get("path") ?? "").trim();
+  const target = raw ? resolvePath(raw) : homedir();
+  let entries: any[];
+  try {
+    entries = await readdir(target, { withFileTypes: true });
+  } catch (err: any) {
+    const msg = err?.code === "ENOENT" ? "folder not found"
+      : err?.code === "EACCES" || err?.code === "EPERM" ? "permission denied"
+      : "cannot read folder";
+    return Response.json({ error: msg, path: target, parent: parentDir(target), sep: pathSep, dirs: [] });
+  }
+  const dirs = entries
+    .filter(e => { try { return e.isDirectory(); } catch { return false; } })
+    .map(e => ({ name: e.name, path: join(target, e.name) }))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base", numeric: true }));
+  return Response.json({ path: target, parent: parentDir(target), sep: pathSep, dirs });
+}
+
+// Start a BRAND-NEW conversation in `cwd`: spawn a fresh CLI (no resume) with
+// the first message, wait for it to reveal its session id and for the watcher
+// to bind the new .jsonl, then hand the client a file to pin to. Disk stays
+// canonical — the new session flows through watcher → reset/append like any other.
+async function handleNew(req: Request): Promise<Response> {
+  const body = await readJsonBody(req);
+  const cwdRaw = typeof body?.cwd === "string" ? body.cwd.trim() : "";
+  const text = typeof body?.text === "string" ? body.text.trim() : "";
+  const mode = asMode(body?.mode) ?? "default";
+  if (!cwdRaw) return Response.json({ error: "missing cwd" }, { status: 400 });
+  if (!text) return Response.json({ error: "missing text" }, { status: 400 });
+
+  const cwd = resolvePath(cwdRaw);
+  try {
+    const st = await stat(cwd);
+    if (!st.isDirectory()) return Response.json({ error: "cwd is not a directory" }, { status: 400 });
+  } catch { return Response.json({ error: "folder does not exist" }, { status: 400 }); }
+  try { await access(cwd, fsConstants.W_OK); }
+  catch { return Response.json({ error: "no write permission for this folder" }, { status: 403 }); }
+
+  const agent = newAgent("", "", cwd, mode);
+  const identified = new Promise<string | null>(resolve => {
+    agent.identifyResolve = resolve;
+    setTimeout(() => {
+      if (agent.identifyResolve) { const r = agent.identifyResolve; agent.identifyResolve = null; r(agent.file || null); }
+    }, NEW_SESSION_IDENTIFY_MS);
+  });
+  startAgentQuery(agent);   // no resume → the CLI mints a fresh session
+  agent.queue.push({
+    type: "user",
+    message: { role: "user", content: [{ type: "text", text }] },
+    parent_tool_use_id: null,
+  });
+  agent.wake?.();
+  agent.state = "working";
+
+  const file = await identified;
+  if (!file) {
+    if (!agent.closed) closeAgent(agent);
+    return Response.json({ error: "could not start the new session (timed out)" }, { status: 504 });
+  }
+  return Response.json({ ok: true, file, sessionId: agent.sessionId });
 }
 
 const pendingChanges = new Map<string, ReturnType<typeof setTimeout>>();
@@ -753,6 +955,18 @@ Bun.serve({
       return handleInterrupt(req).then(withCors);
     }
 
+    if (url.pathname === "/api/mode" && req.method === "POST") {
+      return handleMode(req).then(withCors);
+    }
+
+    if (url.pathname === "/api/new" && req.method === "POST") {
+      return handleNew(req).then(withCors);
+    }
+
+    if (url.pathname === "/api/dirs") {
+      return handleDirs(req).then(withCors);
+    }
+
     if (url.pathname === "/api/search") {
       const q = url.searchParams.get("q") ?? "";
       const limit = Math.min(200, Math.max(1, Number(url.searchParams.get("limit") ?? 60)));
@@ -783,7 +997,7 @@ Bun.serve({
               const target = sub.current;
               const agent = target ? agents.get(target) : null;
               if (agent && !agent.closed) {
-                send(c, "agent", { file: agent.file, state: agent.lastError ? "error" : agent.state, error: agent.lastError });
+                send(c, "agent", { file: agent.file, state: agent.lastError ? "error" : agent.state, error: agent.lastError, mode: agent.permissionMode });
                 for (const perm of agent.pendingPerms.values()) {
                   send(c, "perm", { file: agent.file, id: perm.id, state: "ask", tool: perm.tool, input: perm.input });
                 }
