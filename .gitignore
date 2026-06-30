@@ -2,3 +2,4 @@ node_modules/
 bun.lockb
 *.zip
 .DS_Store
+.claude/worktrees/
