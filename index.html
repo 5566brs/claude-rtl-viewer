@@ -2226,6 +2226,27 @@
       return [{ uuid: obj.uuid, role: "user", text, timestamp: obj.timestamp }];
     }
 
+    // Queued input: a message the user typed while the agent was mid-turn is
+    // persisted as an `attachment` (subtype "queued_command"), NOT as a normal
+    // `type:"user"` entry — without this branch it vanishes from the transcript.
+    // Only this subtype carries user text; the others (todo_reminder,
+    // skill_listing, *_delta) are system noise and stay dropped. The dequeued
+    // prompt is fed to the model but not re-logged as a user turn, so there's no
+    // duplicate to guard against.
+    if (obj.type === "attachment" && obj.attachment?.type === "queued_command") {
+      const p = obj.attachment.prompt;
+      let text = "";
+      if (typeof p === "string") text = p;
+      else if (Array.isArray(p)) {
+        text = p.filter(x => x?.type === "text" && typeof x.text === "string")
+          .map(x => x.text).join("\n");
+      }
+      text = cleanUserText(text);
+      if (!text) return [];
+      if (/^<(ide_|command-|local-command-)/.test(text)) return [];
+      return [{ uuid: obj.uuid, role: "user", text, timestamp: obj.timestamp }];
+    }
+
     if (obj.type === "assistant" && Array.isArray(obj.message?.content)) {
       const out = [];
       const text = obj.message.content

@@ -46,6 +46,7 @@ The rules:
 - Skips `obj.isSidechain` entries (sub-agent traffic).
 - For `type === "user"`: accepts string or array `content`, joins `text` parts, then strips `<system-reminder>`, `<command-…>`, `<local-command-…>`, `<user-prompt-submit-hook>`, `<ide_…>` blocks via `AUTO_BLOCK_PATTERNS`. If what remains is empty or starts with one of those tags, the message is dropped entirely.
 - For `type === "assistant"`: keeps only `text` parts (tool calls/results are ignored on purpose).
+- For `type === "attachment"` with `attachment.type === "queued_command"`: a message the user typed while the agent was mid-turn. The text lives in `attachment.prompt` (string or array of `text` parts), not in `message.content`, and it is **never** re-logged as a normal `user` turn — so without handling it the message disappears entirely. It's extracted and rendered as a user message through the same `cleanUserText` + drop-if-empty path. All other `attachment` subtypes (`todo_reminder`, `skill_listing`, `*_delta`) are system noise and stay dropped.
 
 ### HTTP surface
 
