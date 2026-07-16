@@ -17,6 +17,7 @@ interface SessionMeta {
   mtime: number;
   preview: string;
   title?: string;
+  cwd?: string;  // real working directory from the .jsonl (unambiguous path, unlike the mangled `project` folder name)
 }
 
 const enc = new TextEncoder();
@@ -140,11 +141,12 @@ async function getMessages(path: string, mtime: number): Promise<Msg[]> {
 interface SearchHit {
   path: string;
   project: string;
-  uuid: string;
+  uuid: string;       // representative (highest-count) message, for scroll-to
   role: Role;
   timestamp: string;
   snippet: string;
-  score: number;
+  score: number;      // total term occurrences across the whole session (also used as `count`)
+  count: number;      // total term occurrences in this session — shown in the UI
 }
 
 function projectLabel(proj: string): string {
@@ -161,10 +163,15 @@ async function search(q: string, limit: number): Promise<SearchHit[]> {
   if (terms.length === 0) return [];
   const hits: SearchHit[] = [];
   for (const s of snapshot) {
-    const projText = (projectLabel(s.project) + " " + s.project).toLowerCase();
+    const projText = (projectLabel(s.project) + " " + s.project + " " + (s.cwd ?? "")).toLowerCase();
     let messages: Msg[];
     try { messages = await getMessages(s.path, s.mtime); }
     catch { continue; }
+    // One hit per session: sum term occurrences across all matching messages, and
+    // keep the highest-count message as the representative snippet / scroll target.
+    let sessionCount = 0;
+    let best: { score: number; snippet: string; uuid: string; role: Role; timestamp: string } | null = null;
+    let fallback: { snippet: string; uuid: string; role: Role; timestamp: string } | null = null;
     for (const m of messages) {
       const lower = m.text.toLowerCase();
       let totalCount = 0;
@@ -180,6 +187,7 @@ async function search(q: string, limit: number): Promise<SearchHit[]> {
         }
       }
       if (!ok) continue;
+      sessionCount += totalCount;
       let snippet: string;
       if (firstIdx === -1) {
         const head = m.text.slice(0, 220).replace(/\s+/g, " ");
@@ -192,24 +200,32 @@ async function search(q: string, limit: number): Promise<SearchHit[]> {
           m.text.slice(start, end).replace(/\s+/g, " ") +
           (end < m.text.length ? "…" : "");
       }
-      hits.push({
-        path: s.path,
-        project: s.project,
-        uuid: m.uuid,
-        role: m.role,
-        timestamp: m.timestamp,
-        snippet,
-        score: totalCount,
-      });
+      if (!fallback) fallback = { snippet, uuid: m.uuid, role: m.role, timestamp: m.timestamp };
+      if (firstIdx !== -1 && (!best || totalCount > best.score)) {
+        best = { score: totalCount, snippet, uuid: m.uuid, role: m.role, timestamp: m.timestamp };
+      }
     }
+    const rep = best ?? fallback;
+    if (!rep) continue;  // no message matched (all terms lived only in projText but no message qualified)
+    hits.push({
+      path: s.path,
+      project: s.project,
+      uuid: rep.uuid,
+      role: rep.role,
+      timestamp: rep.timestamp,
+      snippet: rep.snippet,
+      score: sessionCount,
+      count: sessionCount,
+    });
   }
   hits.sort((a, b) => b.score - a.score || (b.timestamp || "").localeCompare(a.timestamp || ""));
   return hits.slice(0, limit);
 }
 
-async function readMeta(path: string): Promise<{ preview: string; title: string }> {
+async function readMeta(path: string): Promise<{ preview: string; title: string; cwd: string }> {
   let preview = "";
   let title = "";
+  let cwd = "";
   try {
     const buf = await Bun.file(path).slice(0, 256 * 1024).arrayBuffer();
     const text = dec.decode(buf);
@@ -225,6 +241,12 @@ async function readMeta(path: string): Promise<{ preview: string; title: string 
         } catch {}
         continue;
       }
+      if (!cwd && line.includes('"cwd"')) {
+        try {
+          const obj = JSON.parse(line);
+          if (typeof obj?.cwd === "string" && obj.cwd) cwd = obj.cwd;
+        } catch {}
+      }
       if (!preview) {
         for (const m of parseLine(line)) {
           if (m.role === "user") { preview = m.text.slice(0, 240); break; }
@@ -232,10 +254,10 @@ async function readMeta(path: string): Promise<{ preview: string; title: string 
       }
     }
   } catch {}
-  return { preview, title };
+  return { preview, title, cwd };
 }
 
-const metaCache = new Map<string, { mtime: number; preview: string; title: string }>();
+const metaCache = new Map<string, { mtime: number; preview: string; title: string; cwd: string }>();
 let snapshot: SessionMeta[] = [];
 
 async function readSessionMeta(full: string, proj: string): Promise<SessionMeta | null> {
@@ -244,17 +266,21 @@ async function readSessionMeta(full: string, proj: string): Promise<SessionMeta 
   const cached = metaCache.get(full);
   let preview: string;
   let title: string;
+  let cwd: string;
   if (cached && cached.mtime === s.mtimeMs) {
     preview = cached.preview;
     title = cached.title;
+    cwd = cached.cwd;
   } else {
     const m = await readMeta(full);
     preview = m.preview;
     title = m.title;
-    metaCache.set(full, { mtime: s.mtimeMs, preview, title });
+    cwd = m.cwd;
+    metaCache.set(full, { mtime: s.mtimeMs, preview, title, cwd });
   }
   const meta: SessionMeta = { path: full, project: proj, mtime: s.mtimeMs, preview };
   if (title) meta.title = title;
+  if (cwd) meta.cwd = cwd;
   return meta;
 }
 

@@ -811,15 +811,32 @@
   }
   .project-name {
     flex: 1;
+    min-width: 0;
+    display: flex;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    unicode-bidi: plaintext;
     direction: ltr;
     text-align: start;
   }
-  .proj-prefix { color: var(--muted); font-weight: 400; }
-  .proj-leaf { color: var(--text); font-weight: 600; }
+  /* Path labels split into <span.proj-prefix><span.proj-leaf>. The leaf (the
+     bold folder name) never shrinks, so it stays fully visible; only the muted
+     prefix truncates with an ellipsis when there isn't enough room. */
+  .proj-prefix {
+    color: var(--muted);
+    font-weight: 400;
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    unicode-bidi: plaintext;
+  }
+  .proj-leaf {
+    color: var(--text);
+    font-weight: 600;
+    flex: 0 0 auto;
+    white-space: nowrap;
+    unicode-bidi: plaintext;
+  }
   .project-count {
     color: var(--muted);
     font-size: 10px;
@@ -851,7 +868,7 @@
   @media (prefers-reduced-motion: reduce) {
     .ps-wrap { transition: none; }
   }
-  .hit-project mark, .project-name mark, .session-project mark {
+  .hit-title mark, .hit-project mark, .project-name mark, .session-project mark {
     background: var(--mark-bg);
     color: var(--mark-text);
     padding: 0 2px;
@@ -905,9 +922,9 @@
     gap: 8px;
   }
   .session-project {
+    display: flex;
+    min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
     flex: 1;
   }
   .session-time { flex-shrink: 0; }
@@ -1084,11 +1101,32 @@
     unicode-bidi: plaintext;
   }
   .hit-role { flex-shrink: 0; }
+  .hit-time { flex-shrink: 0; }
+  .hit-count {
+    flex-shrink: 0;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--mark-text);
+    background: var(--mark-bg);
+    border-radius: 999px;
+    padding: 0 6px;
+    line-height: 1.5;
+  }
   .hit-project {
+    display: flex;
+    min-width: 0;
+    overflow: hidden;
+    flex: 1;
+  }
+  .hit-title {
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    line-height: 1.35;
+    margin-bottom: 3px;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1;
   }
   .hit-snippet {
     font-size: 12px;
@@ -2122,6 +2160,7 @@
       search_no_results: "אין תוצאות",
       search_searching: "מחפש…",
       search_error: "שגיאה",
+      search_occurrences: "מופעים בשיחה",
       // setup errors / hints
       setup_folder_rehydrate: (name) => `לחץ "בחר תיקייה" כדי לחדש הרשאה ל-${name}`,
       setup_server_unreachable: (url) =>
@@ -2238,6 +2277,7 @@
       search_no_results: "No results",
       search_searching: "Searching…",
       search_error: "Error",
+      search_occurrences: "occurrences in chat",
       setup_folder_rehydrate: (name) => `Click "Pick folder" to renew permission for ${name}`,
       setup_server_unreachable: (url) =>
         `Couldn't reach ${url}. Make sure you ran "bun run start" in the project folder and the URL is correct.`,
@@ -2729,16 +2769,36 @@
       .replace(/-+/g, "/")
       .replace(/\/$/, "") || "~";
   }
-  function projectLabelParts(proj) {
-    const full = projectLabel(proj);
+  // Label from the *real* working directory: splits on actual separators (\ or /),
+  // so a literal hyphen in a folder name (e.g. "sip-pbx") survives — unlike
+  // projectLabel(), which turns every "-" in the mangled folder name into "/".
+  function dirLabel(cwd) {
+    let p = String(cwd || "").replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+    p = p.replace(/^[A-Za-z]:\/Users\/[^/]+/i, "~") // Windows: C:/Users/<name>/...
+         .replace(/^\/Users\/[^/]+/i, "~")          // macOS:   /Users/<name>/...
+         .replace(/^\/home\/[^/]+/i, "~")           // Linux:   /home/<name>/...
+         .replace(/^[A-Za-z]:/i, "");               // bare drive with no home match → drop "C:"
+    return p || "~";
+  }
+  // Full, human-readable path for a session. Prefers the real cwd; falls back to
+  // decoding the mangled project-folder name when no cwd was recorded.
+  function projectFull(proj, cwd) {
+    return cwd ? dirLabel(cwd) : projectLabel(proj);
+  }
+  // Tooltip shows the raw absolute path when we have it (most useful on hover).
+  function projectTooltip(proj, cwd) {
+    return cwd || projectLabel(proj);
+  }
+  function projectLabelParts(proj, cwd) {
+    const full = projectFull(proj, cwd);
     const idx = full.lastIndexOf("/");
     if (idx === -1) return { prefix: "", leaf: full };
     return { prefix: full.slice(0, idx + 1), leaf: full.slice(idx + 1) };
   }
   // Renders a project label into `container` as <span.proj-prefix>?<span.proj-leaf>.
   // When `q` is provided, search terms are highlighted via <mark> in each part.
-  function renderProjectLabel(container, proj, q) {
-    const { prefix, leaf } = projectLabelParts(proj);
+  function renderProjectLabel(container, proj, q, cwd) {
+    const { prefix, leaf } = projectLabelParts(proj, cwd);
     container.textContent = "";
     if (prefix) {
       const p = document.createElement("span");
@@ -3339,8 +3399,8 @@
     if (withProject) {
       const proj = document.createElement("span");
       proj.className = "session-project";
-      renderProjectLabel(proj, s.project);
-      proj.setAttribute("data-tooltip", projectLabel(s.project));
+      renderProjectLabel(proj, s.project, undefined, s.cwd);
+      proj.setAttribute("data-tooltip", projectTooltip(s.project, s.cwd));
       meta.appendChild(proj);
     }
     const timeEl = document.createElement("span");
@@ -3399,8 +3459,9 @@
 
       const name = document.createElement("span");
       name.className = "project-name";
-      renderProjectLabel(name, project);
-      name.setAttribute("data-tooltip", projectLabel(project));
+      const groupCwd = g.sessions[0]?.cwd;
+      renderProjectLabel(name, project, undefined, groupCwd);
+      name.setAttribute("data-tooltip", projectTooltip(project, groupCwd));
 
       const count = document.createElement("span");
       count.className = "project-count";
@@ -3795,7 +3856,7 @@
     const date = new Date(meta?.mtime || Date.now()).toISOString().slice(0, 10);
     const titleSource = meta?.title
       || meta?.preview
-      || (meta?.project ? projectLabelParts(meta.project).leaf : "");
+      || (meta?.project ? projectLabelParts(meta.project, meta.cwd).leaf : "");
     const slug = slugifyForFilename(titleSource) || "session";
     const uuid8 = uuidName.slice(0, 8) || "noid";
     return `claude-${date}-${slug}-${uuid8}`;
@@ -4139,9 +4200,14 @@ ${titleEl}${wrap.outerHTML}
       if (!terms.length) return [];
       const hits = [];
       for (const s of this.sessions) {
-        const projText = (projectLabel(s.project) + " " + s.project).toLowerCase();
+        const projText = (projectLabel(s.project) + " " + s.project + " " + (s.cwd || "")).toLowerCase();
         let messages;
         try { messages = await this._getMessages(s.path); } catch { continue; }
+        // One hit per session: sum term occurrences across all matching messages,
+        // and keep the highest-count message as the representative snippet.
+        let sessionCount = 0;
+        let best = null;
+        let fallback = null;
         for (const m of messages) {
           const lower = m.text.toLowerCase();
           let totalCount = 0;
@@ -4157,6 +4223,7 @@ ${titleEl}${wrap.outerHTML}
             }
           }
           if (!ok) continue;
+          sessionCount += totalCount;
           let snippet;
           if (firstIdx === -1) {
             const head = m.text.slice(0, 220).replace(/\s+/g, " ");
@@ -4169,11 +4236,18 @@ ${titleEl}${wrap.outerHTML}
               m.text.slice(start, end).replace(/\s+/g, " ") +
               (end < m.text.length ? "…" : "");
           }
-          hits.push({
-            path: s.path, project: s.project, uuid: m.uuid,
-            role: m.role, timestamp: m.timestamp, snippet, score: totalCount,
-          });
+          if (!fallback) fallback = { snippet, uuid: m.uuid, role: m.role, timestamp: m.timestamp };
+          if (firstIdx !== -1 && (!best || totalCount > best.score)) {
+            best = { score: totalCount, snippet, uuid: m.uuid, role: m.role, timestamp: m.timestamp };
+          }
         }
+        const rep = best || fallback;
+        if (!rep) continue;
+        hits.push({
+          path: s.path, project: s.project, uuid: rep.uuid,
+          role: rep.role, timestamp: rep.timestamp, snippet: rep.snippet,
+          score: sessionCount, count: sessionCount,
+        });
       }
       hits.sort((a, b) => b.score - a.score || (b.timestamp || "").localeCompare(a.timestamp || ""));
       return hits.slice(0, limit);
@@ -4198,9 +4272,10 @@ ${titleEl}${wrap.outerHTML}
           this.fileHandles.set(path, fileHandle);
           let file;
           try { file = await fileHandle.getFile(); } catch { continue; }
-          const { preview, title } = await this._readMeta(file);
+          const { preview, title, cwd } = await this._readMeta(file);
           const meta = { path, project: projName, mtime: file.lastModified, preview };
           if (title) meta.title = title;
+          if (cwd) meta.cwd = cwd;
           sessions.push(meta);
         }
       }
@@ -4211,6 +4286,7 @@ ${titleEl}${wrap.outerHTML}
     async _readMeta(file) {
       let preview = "";
       let title = "";
+      let cwd = "";
       try {
         const text = await file.slice(0, 256 * 1024).text();
         for (const line of text.split("\n")) {
@@ -4225,6 +4301,12 @@ ${titleEl}${wrap.outerHTML}
             } catch {}
             continue;
           }
+          if (!cwd && line.includes('"cwd"')) {
+            try {
+              const obj = JSON.parse(line);
+              if (typeof obj?.cwd === "string" && obj.cwd) cwd = obj.cwd;
+            } catch {}
+          }
           if (!preview) {
             for (const m of parseLine(line)) {
               if (m.role === "user") { preview = m.text.slice(0, 240); break; }
@@ -4232,7 +4314,7 @@ ${titleEl}${wrap.outerHTML}
           }
         }
       } catch {}
-      return { preview, title };
+      return { preview, title, cwd };
     }
 
     async _getMessages(path) {
@@ -4324,10 +4406,11 @@ ${titleEl}${wrap.outerHTML}
         let file;
         try { file = await handle.getFile(); } catch { continue; }
 
-        const { preview, title } = await this._readMeta(file);
+        const { preview, title, cwd } = await this._readMeta(file);
         const idx = this.sessions.findIndex(s => s.path === rel);
         const meta = { path: rel, project: proj, mtime: file.lastModified, preview };
         if (title) meta.title = title;
+        if (cwd) meta.cwd = cwd;
         if (idx >= 0) {
           const prev = this.sessions[idx];
           if (prev.mtime !== meta.mtime || prev.preview !== meta.preview || prev.title !== meta.title) {
@@ -4829,8 +4912,21 @@ ${titleEl}${wrap.outerHTML}
       return;
     }
     for (const hit of hits) {
+      const sess = sessionsList.find(s => s.path === hit.path);
       const item = document.createElement("div");
       item.className = "search-hit";
+      const children = [];
+
+      // Chat title (falls back to the session's stored title; omitted if none).
+      const titleText = sess?.title;
+      if (titleText) {
+        const titleEl = document.createElement("div");
+        titleEl.className = "hit-title";
+        titleEl.dir = "auto";
+        titleEl.innerHTML = highlightMatches(titleText, q);
+        children.push(titleEl);
+      }
+
       const meta = document.createElement("div");
       meta.className = "hit-meta";
       const role = document.createElement("span");
@@ -4838,17 +4934,28 @@ ${titleEl}${wrap.outerHTML}
       role.textContent = hit.role;
       const proj = document.createElement("span");
       proj.className = "hit-project";
-      renderProjectLabel(proj, hit.project, q);
-      proj.setAttribute("data-tooltip", projectLabel(hit.project));
+      renderProjectLabel(proj, hit.project, q, sess?.cwd);
+      proj.setAttribute("data-tooltip", projectTooltip(hit.project, sess?.cwd));
       const time = document.createElement("span");
       time.className = "hit-time";
       time.textContent = hit.timestamp ? relTime(new Date(hit.timestamp).getTime()) : "";
       meta.append(role, proj, time);
+      // Total term occurrences across the whole chat.
+      if (hit.count > 0) {
+        const cnt = document.createElement("span");
+        cnt.className = "hit-count";
+        cnt.textContent = String(hit.count);
+        cnt.setAttribute("data-tooltip", `${hit.count} ${t("search_occurrences")}`);
+        meta.appendChild(cnt);
+      }
+      children.push(meta);
+
       const snip = document.createElement("div");
       snip.className = "hit-snippet";
       snip.dir = "auto";
       snip.innerHTML = highlightMatches(hit.snippet, q);
-      item.append(meta, snip);
+      children.push(snip);
+      item.append(...children);
       item.addEventListener("click", () => {
         pendingScrollUuid = hit.uuid;
         if (hit.path === activeFile && mode === "pinned") {
