@@ -9,7 +9,7 @@ const PORT = Number(process.env.PORT ?? 5577);
 const DEBOUNCE_MS = 30;
 
 type Role = "user" | "assistant" | "tool";
-interface ToolEntry { name: string; input?: unknown; }
+interface ToolEntry { name: string; input?: unknown; id?: string; }
 interface Msg { uuid: string; role: Role; text: string; timestamp: string; tools?: ToolEntry[]; }
 interface SessionMeta {
   path: string;
@@ -40,10 +40,12 @@ function cleanUserText(text: string): string {
   return text.trim();
 }
 
-function parseLine(line: string): Msg[] {
+// `sidechain: true` is used when parsing a subagent transcript, where every
+// line is isSidechain by definition; main-session parsing keeps dropping them.
+function parseLine(line: string, opts?: { sidechain?: boolean }): Msg[] {
   let obj: any;
   try { obj = JSON.parse(line); } catch { return []; }
-  if (obj.isSidechain) return [];
+  if (obj.isSidechain && !opts?.sidechain) return [];
   // Skip meta entries (isMeta: true) — system-injected turns such as skill
   // expansions, which can be hundreds of KB and are hidden by official UIs.
   if (obj.isMeta) return [];
@@ -98,7 +100,12 @@ function parseLine(line: string): Msg[] {
 
     const tools: ToolEntry[] = obj.message.content
       .filter((p: any) => p?.type === "tool_use" && typeof p.name === "string")
-      .map((p: any) => ({ name: p.name as string, input: p.input }));
+      .map((p: any) => {
+        const t: ToolEntry = { name: p.name as string, input: p.input };
+        // The id links an Agent call to its subagent transcript on disk.
+        if (typeof p.id === "string") t.id = p.id;
+        return t;
+      });
     if (tools.length) {
       out.push({
         uuid: text ? `${obj.uuid}#t` : obj.uuid,
@@ -114,14 +121,14 @@ function parseLine(line: string): Msg[] {
   return [];
 }
 
-async function loadFile(path: string): Promise<Msg[]> {
+async function loadFile(path: string, opts?: { sidechain?: boolean }): Promise<Msg[]> {
   const buf = await Bun.file(path).arrayBuffer();
   const text = dec.decode(buf);
   const seen = new Set<string>();
   const out: Msg[] = [];
   for (const line of text.split("\n")) {
     if (!line) continue;
-    for (const m of parseLine(line)) {
+    for (const m of parseLine(line, opts)) {
       if (!seen.has(m.uuid)) { seen.add(m.uuid); out.push(m); }
     }
   }
@@ -903,6 +910,49 @@ function parentDir(p: string): string | null {
   return up && up !== p ? up : null;
 }
 
+// Subagent transcripts (Agent-tool sidechains) live in a directory named after
+// the session: <project>/<session-id>/subagents/agent-*.jsonl, with a sibling
+// agent-*.meta.json whose `toolUseId` links the transcript back to the Agent
+// tool_use in the main .jsonl. This resolves a tool_use id to the parsed
+// transcript so the client can show the subagent's conversation — including
+// its final report, which never renders from the main file (tool_results are
+// dropped by design there).
+async function handleSubagent(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const file = url.searchParams.get("file") ?? "";
+  const id = url.searchParams.get("id") ?? "";
+  // `file` must be a known session — this also blocks path traversal (we never
+  // touch the filesystem from a client-supplied path that isn't in the snapshot).
+  if (!snapshot.some(s => s.path === file)) {
+    return Response.json({ error: "unknown session file" }, { status: 404 });
+  }
+  if (!/^[A-Za-z0-9_-]+$/.test(id)) {
+    return Response.json({ error: "bad tool_use id" }, { status: 400 });
+  }
+  const subDir = join(file.replace(/\.jsonl$/i, ""), "subagents");
+  let entries: string[];
+  try { entries = await readdir(subDir); } catch {
+    return Response.json({ error: "no subagent transcripts for this session" }, { status: 404 });
+  }
+  for (const name of entries) {
+    if (!name.endsWith(".meta.json")) continue;
+    let meta: any;
+    try { meta = JSON.parse(await Bun.file(join(subDir, name)).text()); } catch { continue; }
+    if (meta?.toolUseId !== id) continue;
+    const transcript = join(subDir, name.replace(/\.meta\.json$/, ".jsonl"));
+    let messages: Msg[];
+    try { messages = await loadFile(transcript, { sidechain: true }); } catch {
+      return Response.json({ error: "subagent transcript unreadable" }, { status: 404 });
+    }
+    return Response.json({
+      messages,
+      agentType: typeof meta.agentType === "string" ? meta.agentType : null,
+      description: typeof meta.description === "string" ? meta.description : null,
+    });
+  }
+  return Response.json({ error: "subagent transcript not found" }, { status: 404 });
+}
+
 // Folder browser for "new chat": list the sub-directories of `path` (defaults
 // to the user's home) so the viewer can walk the real filesystem and pick a
 // working directory. Errors come back 200 with an `error` field + the resolved
@@ -1009,6 +1059,28 @@ function scheduleChange(relPath: string) {
   pendingChanges.set(relPath, t);
 }
 
+// <project>/<session-id>/subagents/agent-*.jsonl → full path of the parent
+// session's .jsonl, or null if the path isn't subagent-shaped.
+function subagentMainFile(relPath: string): string | null {
+  const m = relPath.replace(/\\/g, "/").match(/^([^/]+)\/([^/]+)\/subagents\/[^/]+\.jsonl$/);
+  return m ? join(PROJECTS_DIR, m[1], `${m[2]}.jsonl`) : null;
+}
+
+// Debounced like scheduleChange. Content is fetched on demand via /api/subagent;
+// this only pings subs viewing the parent session so an open thread can refresh.
+const pendingSubagentPings = new Map<string, ReturnType<typeof setTimeout>>();
+function scheduleSubagentPing(mainFile: string) {
+  const existing = pendingSubagentPings.get(mainFile);
+  if (existing) clearTimeout(existing);
+  const t = setTimeout(() => {
+    pendingSubagentPings.delete(mainFile);
+    for (const sub of subs) {
+      if (sub.current === mainFile) send(sub.controller, "subagent", { file: mainFile });
+    }
+  }, DEBOUNCE_MS);
+  pendingSubagentPings.set(mainFile, t);
+}
+
 await loadOwned();
 await initialScan();
 
@@ -1021,7 +1093,11 @@ try {
     // ones (e.g. <session-id>/subagents/agent-*.jsonl) must not reach syncFile —
     // they'd enter the snapshot as phantom empty sessions (initialScan never
     // sees them, so they'd also vanish on restart).
-    if (name.replace(/\\/g, "/").split("/").length !== 2) return;
+    if (name.replace(/\\/g, "/").split("/").length !== 2) {
+      const main = subagentMainFile(name);
+      if (main) scheduleSubagentPing(main);
+      return;
+    }
     scheduleChange(name);
   });
   watcher.on("error", err => console.error("watcher error:", err));
@@ -1084,6 +1160,10 @@ Bun.serve({
 
     if (url.pathname === "/api/new" && req.method === "POST") {
       return handleNew(req).then(withCors);
+    }
+
+    if (url.pathname === "/api/subagent") {
+      return handleSubagent(req).then(withCors);
     }
 
     if (url.pathname === "/api/dirs") {

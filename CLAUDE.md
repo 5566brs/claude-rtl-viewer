@@ -27,7 +27,7 @@ A small UI in the sidebar lets the user pick which source to run. Mode preferenc
 The server is **event-driven**: there is no `setInterval` ticking the filesystem. Sequence:
 
 1. `initialScan()` walks every project subfolder once at startup and seeds the `snapshot: SessionMeta[]` plus `previewCache`.
-2. `fs.watch(PROJECTS_DIR, { recursive: true }, ...)` fires on any file change inside the tree. `relativePathComponents`-style `filename` is normalized; non-`.jsonl` events are ignored.
+2. `fs.watch(PROJECTS_DIR, { recursive: true }, ...)` fires on any file change inside the tree. `relativePathComponents`-style `filename` is normalized; non-`.jsonl` events are ignored. Only `.jsonl` files **directly under a project folder** count as sessions — deeper ones would become phantom empty sidebar entries (the initial scans walk exactly two levels, so they'd also vanish on restart). Changes under `<session-id>/subagents/` instead fire a debounced `subagent` SSE ping (see "Subagent transcripts" below); anything else deep is dropped. The same depth rule lives in `LocalSource._stageRecord`.
 3. Each event is **debounced per-path** with a `DEBOUNCE_MS = 30` window via `pendingChanges: Map<path, Timeout>` — Windows fires the same write twice, so coalescing is required.
 4. `handleChange(relPath)` calls `syncFile()` (which re-stats and updates the entry's `mtime` / `preview`, or removes it if the file disappeared), then for each affected SSE subscriber calls `processSub()`:
    - If the file's `size` grew, only the new byte range is read via `Bun.file(path).slice(lastSize, size)` and parsed line by line, emitting `append` events.
@@ -43,10 +43,19 @@ The server is **event-driven**: there is no `setInterval` ticking the filesystem
 
 The rules:
 
-- Skips `obj.isSidechain` entries (sub-agent traffic).
+- Skips `obj.isSidechain` entries (sub-agent traffic) — unless called as `parseLine(line, { sidechain: true })`, which is how subagent transcripts (all-sidechain files) are parsed for the nested Agent-thread view. Main-session parsing never passes the flag.
 - For `type === "user"`: accepts string or array `content`, joins `text` parts, then strips `<system-reminder>`, `<command-…>`, `<local-command-…>`, `<user-prompt-submit-hook>`, `<ide_…>` blocks via `AUTO_BLOCK_PATTERNS`. If what remains is empty or starts with one of those tags, the message is dropped entirely.
-- For `type === "assistant"`: keeps only `text` parts (tool calls/results are ignored on purpose).
+- For `type === "assistant"`: `text` parts become an `assistant` message; `tool_use` parts become a separate `role:"tool"` message carrying `tools:[{name, input, id}]` (the `id` is the tool_use id — it's what links an `Agent` call to its subagent transcript). `tool_result` contents are still ignored on purpose.
 - For `type === "attachment"` with `attachment.type === "queued_command"` **and `attachment.commandMode === "prompt"`**: a message the user typed while the agent was mid-turn. The text lives in `attachment.prompt` (string or array of `text` parts), not in `message.content`, and it is **never** re-logged as a normal `user` turn — so without handling it the message disappears entirely. It's extracted and rendered as a user message through the same `cleanUserText` + drop-if-empty/tag-guard path. The `commandMode` gate is load-bearing: the sibling mode `task-notification` (~64% of queued_command entries in practice) carries system `<task-notification>` blocks from background-task completions, not user input — without the gate those would render as fake user prompts. Other `attachment` subtypes (`todo_reminder`, `skill_listing`, `*_delta`) are system noise and stay dropped.
+
+### Subagent transcripts (Agent tool)
+
+Modern Claude Code writes each Agent (subagent) run to its **own file**: `<project>/<session-id>/subagents/agent-*.jsonl` (every line `isSidechain: true`), with a sibling `agent-*.meta.json` carrying `{agentType, description, toolUseId, spawnDepth}`. The main `.jsonl` only logs the Agent `tool_use` and its `tool_result` — so the subagent's WebFetch/WebSearch/etc. calls and its final report exist **only** in that side file.
+
+- Each `Agent`/`Task` tool chip gets a nested `details.subagent` fold (`renderSubagentSection` in [index.html](index.html)). Opening it lazy-loads the transcript via `source.loadSubagent(file, toolUseId)` — `GET /api/subagent` in server mode, a directory-handle walk in `LocalSource` — and renders the full thread through the normal `renderMessage` pipeline, so tool chips, markdown, and RTL handling all apply. The last assistant message **is** the final report (the copy in the main file's `tool_result` stays dropped by design).
+- Lookup is by `toolUseId` across the session's `subagents/*.meta.json`. Nested agents (spawnDepth ≥ 2) live in the same directory, so chips inside a loaded thread resolve recursively for free.
+- Live refresh: a change under `subagents/` becomes a `subagent` SSE event (server; sent only to subs whose `current` is the parent session) or an `onSubagentChange` call (`LocalSource`, gated on `currentTarget`). The client re-fetches any **open** fold (`refreshOpenSubagents`); a newer fetch always wins over an in-flight older one (`subagentLoadSeq`), and a failed refresh never wipes an already-rendered thread.
+- Old sessions (inline sidechain lines in the main file, pre-side-file era) have no side transcript — the fold opens to "not found" and the next expand retries. Accepted trade-off; don't try to reconstruct threads from inline sidechain lines.
 
 ### HTTP surface
 
@@ -54,8 +63,9 @@ All responses include `Access-Control-Allow-Origin: *` plus `Access-Control-Allo
 
 - `GET /` and `GET /index.html` → reads `index.html` from disk on each request (so a browser refresh picks up edits without restarting the server).
 - `GET /api/sessions` → snapshot JSON; mainly for debugging — the client normally gets sessions over SSE.
-- `GET /api/search?q=&limit=` → AND-of-terms search across `messageCache`. Score = total term occurrences; ties break by `timestamp` desc. `limit` defaults to 60, hard max 200.
-- `GET /events` (with optional `?file=`) → SSE stream emitting `ready`, `sessions` (each entry carries an `owned` flag — see ownership below), `reset`, `append`, plus the live-agent events `agent` (state, plus the conversation's permission `mode` and a working `activity` sub-status), `perm` (permission prompts), `stream` (token deltas — only sent to subs whose `current` is that file). `idleTimeout: 0` keeps long connections alive.
+- `GET /api/search?q=&limit=` → AND-of-terms search across `messageCache`. Score = total term occurrences; ties break by `timestamp` desc. `limit` defaults to 60, hard max 200. (Main transcripts only — subagent side files are not indexed.)
+- `GET /api/subagent?file=&id=` → resolve an Agent `tool_use` id to its subagent transcript: `{messages, agentType, description}`, parsed with the sidechain flag. `file` must be in `snapshot` (blocks path traversal), `id` must match `^[A-Za-z0-9_-]+$` (400 otherwise); 404 when the session, `subagents/` dir, or matching `toolUseId` doesn't exist.
+- `GET /events` (with optional `?file=`) → SSE stream emitting `ready`, `sessions` (each entry carries an `owned` flag — see ownership below), `reset`, `append`, plus the live-agent events `agent` (state, plus the conversation's permission `mode` and a working `activity` sub-status), `perm` (permission prompts), `stream` (token deltas — only sent to subs whose `current` is that file), and `subagent` (`{file}` — a subagent transcript of that session changed on disk; same `current`-only routing). `idleTimeout: 0` keeps long connections alive.
 - `POST /api/send` (`{file, text, mode?}`) → feeds the message into the conversation's **persistent Claude Code process** (see "Live agents" below), starting one if needed. Returns **403** if the session isn't viewer-owned (read-only — see ownership below). `mode` (optional) sets the permission mode for the spawn / applies it live; a refused live switch is logged but the message still sends. Returns `{ok:true}` immediately; messages sent while a turn is running are queued by the process.
 - `POST /api/permission` (`{file, id, allow, message?}`) → resolves a pending tool-permission prompt.
 - `POST /api/interrupt` (`{file}`) → interrupts the current turn (like Esc in the CLI).

@@ -402,6 +402,50 @@
     color: var(--text);
     unicode-bidi: plaintext;
   }
+  /* Nested subagent conversation inside an Agent tool entry */
+  details.subagent > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    color: var(--accent);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    unicode-bidi: plaintext;
+  }
+  details.subagent > summary::-webkit-details-marker { display: none; }
+  details.subagent > summary::before {
+    content: "▸";
+    display: inline-block;
+    width: 12px;
+  }
+  details.subagent[open] > summary::before { content: "▾"; }
+  .subagent-box {
+    margin-top: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .subagent-meta { font-size: 11px; color: var(--muted); direction: ltr; }
+  .subagent-thread {
+    /* Reset the .msg.tool mono/muted context so nested user/assistant
+       messages read like normal transcript bubbles, just smaller. */
+    font-family: var(--font-ui);
+    font-size: 13.5px;
+    letter-spacing: normal;
+    color: var(--text);
+    border-inline-start: 2px solid var(--accent);
+    padding-inline-start: 10px;
+  }
+  .subagent-thread .msg { margin: 0 0 10px; padding: 10px 14px; border-radius: 10px; }
+  .subagent-thread .msg:last-child { margin-bottom: 0; }
+  .subagent-thread .msg.tool {
+    margin: 2px 0 8px;
+    padding: 2px 10px;
+    border-radius: 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
   .tool-code {
     margin: 0;
     padding: 6px 8px;
@@ -2135,6 +2179,11 @@
       tt_export_cancel: "צא ממצב יצוא",
       tt_tool_raw_show: "הצג JSON גולמי",
       tt_tool_raw_hide: "הסתר JSON גולמי",
+      // subagent thread (Agent tool)
+      subagent_show: "שיחת הסוכן (סאב־אייג'נט)",
+      subagent_loading: "טוען תמלול…",
+      subagent_missing: "תמלול הסוכן לא נמצא",
+      subagent_empty: "(תמלול ריק)",
       tt_lang: "Switch to English",
       tt_fab_top: "גלול לתחילת השיחה",
       tt_fab_bottom: "גלול לסוף השיחה",
@@ -2255,6 +2304,11 @@
       tt_export_cancel: "Exit export mode",
       tt_tool_raw_show: "Show raw JSON",
       tt_tool_raw_hide: "Hide raw JSON",
+      // subagent thread (Agent tool)
+      subagent_show: "Subagent conversation",
+      subagent_loading: "Loading transcript…",
+      subagent_missing: "Subagent transcript not found",
+      subagent_empty: "(empty transcript)",
       tt_lang: "החלף לעברית",
       tt_fab_top: "Scroll to start of conversation",
       tt_fab_bottom: "Scroll to end of conversation",
@@ -2588,10 +2642,12 @@
     for (const re of AUTO_BLOCK_PATTERNS) text = text.replace(re, "");
     return text.trim();
   }
-  function parseLine(line) {
+  // `sidechain: true` is used when parsing a subagent transcript, where every
+  // line is isSidechain by definition; main-session parsing keeps dropping them.
+  function parseLine(line, opts) {
     let obj;
     try { obj = JSON.parse(line); } catch { return []; }
-    if (obj.isSidechain) return [];
+    if (obj.isSidechain && !opts?.sidechain) return [];
     // Skip meta entries (isMeta: true) — system-injected turns such as skill
     // expansions, which can be hundreds of KB and are hidden by official UIs.
     if (obj.isMeta) return [];
@@ -2643,7 +2699,12 @@
 
       const tools = obj.message.content
         .filter(p => p?.type === "tool_use" && typeof p.name === "string")
-        .map(p => ({ name: p.name, input: p.input }));
+        .map(p => {
+          const t = { name: p.name, input: p.input };
+          // The id links an Agent call to its subagent transcript on disk.
+          if (typeof p.id === "string") t.id = p.id;
+          return t;
+        });
       if (tools.length) {
         out.push({
           uuid: text ? `${obj.uuid}#t` : obj.uuid,
@@ -2658,12 +2719,12 @@
 
     return [];
   }
-  function parseJsonl(text) {
+  function parseJsonl(text, opts) {
     const seen = new Set();
     const out = [];
     for (const line of text.split("\n")) {
       if (!line) continue;
-      for (const m of parseLine(line)) {
+      for (const m of parseLine(line, opts)) {
         if (!seen.has(m.uuid)) { seen.add(m.uuid); out.push(m); }
       }
     }
@@ -3116,6 +3177,72 @@
       };
     },
   };
+  // "Agent" is the current name of the subagent-spawning tool ("Task" in older
+  // transcripts); both carry the same input shape.
+  toolRenderers.Agent = toolRenderers.Task;
+
+  // ---------- subagent thread (Agent tool) ----------
+  // An Agent run keeps its conversation in a separate transcript on disk
+  // (<project>/<session-id>/subagents/agent-*.jsonl) — including the final
+  // report, which the main file never renders (tool_results are dropped by
+  // design). Fetch it lazily when the user opens the fold.
+  function renderSubagentSection(toolUseId) {
+    const det = el("details", "subagent");
+    det.dataset.subagentId = toolUseId;
+    const sum = document.createElement("summary");
+    sum.className = "subagent-summary";
+    sum.textContent = t("subagent_show");
+    const box = el("div", "subagent-box");
+    det.append(sum, box);
+    det.addEventListener("toggle", () => {
+      if (det.open && !det.dataset.loaded) loadSubagentInto(det, toolUseId);
+    });
+    return det;
+  }
+
+  let subagentLoadSeq = 0;
+  async function loadSubagentInto(det, toolUseId) {
+    const box = det.querySelector(".subagent-box");
+    if (!box || !toolUseId || !source?.loadSubagent) return;
+    det.dataset.loaded = "1";
+    // A newer fetch always wins (guards the refresh-while-loading race).
+    const seq = ++subagentLoadSeq;
+    det._subagentSeq = seq;
+    const file = activeFile;
+    if (!box.childElementCount) box.textContent = t("subagent_loading");
+    let data = null;
+    try { data = await source.loadSubagent(file, toolUseId); }
+    catch {
+      if (det._subagentSeq !== seq) return;
+      delete det.dataset.loaded;   // allow retry on the next expand
+      // Don't wipe an already-rendered thread over a transient refresh failure.
+      if (activeFile === file && !box.querySelector(".subagent-thread")) {
+        box.textContent = t("subagent_missing");
+      }
+      return;
+    }
+    if (det._subagentSeq !== seq || activeFile !== file || !data) return;
+    box.textContent = "";
+    const metaBits = [data.agentType, data.description].filter(Boolean);
+    if (metaBits.length) box.appendChild(el("div", "subagent-meta", metaBits.join(" · ")));
+    const msgs = Array.isArray(data.messages) ? data.messages : [];
+    if (!msgs.length) {
+      box.appendChild(el("div", "subagent-meta", t("subagent_empty")));
+      return;
+    }
+    const thread = el("div", "subagent-thread");
+    for (const m of msgs) thread.appendChild(renderMessage(m));
+    box.appendChild(thread);
+  }
+
+  // A subagent transcript changed on disk (its Agent is still running):
+  // re-fetch any thread the user has open in the active session.
+  function refreshOpenSubagents(data) {
+    if (!data?.file || data.file !== activeFile) return;
+    messagesEl.querySelectorAll("details.subagent[open]").forEach(det => {
+      loadSubagentInto(det, det.dataset.subagentId);
+    });
+  }
 
   function renderToolBlock(tool) {
     const renderer = toolRenderers[tool?.name];
@@ -3168,6 +3295,11 @@
     entry.appendChild(header);
     entry.appendChild(bodyEl);
     if (rawPre) entry.appendChild(rawPre);
+    // Agent runs get a nested lazy-loaded thread of the subagent's own
+    // conversation (kept outside bodyEl so the raw-JSON toggle doesn't hide it).
+    if ((tool?.name === "Agent" || tool?.name === "Task") && typeof tool?.id === "string") {
+      entry.appendChild(renderSubagentSection(tool.id));
+    }
     return { summary: rendered?.summary, entry };
   }
 
@@ -3509,6 +3641,7 @@
     onAgentState: applyAgentState,
     onPerm: applyPerm,
     onStream: applyStream,
+    onSubagentChange: refreshOpenSubagents,
   };
 
   // ---------- live agent UI (composer / permissions / stream ghost) ----------
@@ -4000,6 +4133,16 @@ body{font-family:"Geist","Heebo","Segoe UI",-apple-system,system-ui,sans-serif;b
 .todo-completed .todo-text{color:var(--muted);text-decoration:line-through;}
 .todo-in_progress .todo-mark{color:var(--accent);}
 .todo-in_progress .todo-text{font-weight:600;}
+details.subagent>summary{cursor:pointer;list-style:none;user-select:none;color:var(--accent);font-size:11px;unicode-bidi:plaintext;}
+details.subagent>summary::-webkit-details-marker{display:none;}
+details.subagent>summary::before{content:"▸";display:inline-block;width:12px;}
+details.subagent[open]>summary::before{content:"▾";}
+.subagent-box{margin-top:6px;display:flex;flex-direction:column;gap:6px;}
+.subagent-meta{font-size:11px;color:var(--muted);direction:ltr;}
+.subagent-thread{font-family:"Geist","Heebo","Segoe UI",-apple-system,system-ui,sans-serif;font-size:13.5px;letter-spacing:normal;color:var(--text);border-inline-start:2px solid var(--accent);padding-inline-start:10px;}
+.subagent-thread .msg{margin:0 0 10px;padding:10px 14px;border-radius:10px;}
+.subagent-thread .msg:last-child{margin-bottom:0;}
+.subagent-thread .msg.tool{margin:2px 0 8px;padding:2px 10px;border-radius:0;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:11px;color:var(--muted);}
 .role{font-size:10px;text-transform:uppercase;color:var(--muted);margin-bottom:6px;letter-spacing:.6px;font-family:ui-monospace,monospace;direction:ltr;unicode-bidi:isolate;}
 .body{unicode-bidi:isolate;}
 .body>*:first-child{margin-top:0;}
@@ -4121,6 +4264,17 @@ ${titleEl}${wrap.outerHTML}
       if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
       return data;
     }
+    // Resolve an Agent tool_use id to its subagent transcript (parsed messages).
+    async loadSubagent(file, toolUseId) {
+      const res = await fetch(
+        `${this.baseUrl}/api/subagent?file=${encodeURIComponent(file)}&id=${encodeURIComponent(toolUseId)}`,
+        { cache: "no-store" },
+      );
+      let data = null;
+      try { data = await res.json(); } catch {}
+      if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+      return data;
+    }
     sendMessage(file, text, mode) { return this._post("/api/send", { file, text, mode }); }
     interrupt(file) { return this._post("/api/interrupt", { file }); }
     setMode(file, mode) { return this._post("/api/mode", { file, mode }); }
@@ -4146,6 +4300,7 @@ ${titleEl}${wrap.outerHTML}
       es.addEventListener("agent", e => this.handlers.onAgentState?.(JSON.parse(e.data)));
       es.addEventListener("perm", e => this.handlers.onPerm?.(JSON.parse(e.data)));
       es.addEventListener("stream", e => this.handlers.onStream?.(JSON.parse(e.data)));
+      es.addEventListener("subagent", e => this.handlers.onSubagentChange?.(JSON.parse(e.data)));
       es.onerror = () => this.handlers.onStatus("reconnecting…", "dead");
       this.es = es;
     }
@@ -4329,6 +4484,32 @@ ${titleEl}${wrap.outerHTML}
       return messages;
     }
 
+    // Resolve an Agent tool_use id to its subagent transcript. Mirrors the
+    // server's /api/subagent: subagent transcripts live in a directory named
+    // after the session (<project>/<session-id>/subagents/agent-*.jsonl), and
+    // the sibling agent-*.meta.json carries the linking `toolUseId`.
+    async loadSubagent(path, toolUseId) {
+      const m = String(path).match(/^([^/]+)\/(.+)\.jsonl$/);
+      if (!m) throw new Error("bad session path");
+      const projHandle = await this.dirHandle.getDirectoryHandle(m[1]);
+      const sessionDir = await projHandle.getDirectoryHandle(m[2]);
+      const subDir = await sessionDir.getDirectoryHandle("subagents");
+      for await (const [name, handle] of subDir.entries()) {
+        if (handle.kind !== "file" || !name.endsWith(".meta.json")) continue;
+        let meta;
+        try { meta = JSON.parse(await (await handle.getFile()).text()); } catch { continue; }
+        if (meta?.toolUseId !== toolUseId) continue;
+        const fileHandle = await subDir.getFileHandle(name.replace(/\.meta\.json$/, ".jsonl"));
+        const text = await (await fileHandle.getFile()).text();
+        return {
+          messages: parseJsonl(text, { sidechain: true }),
+          agentType: typeof meta.agentType === "string" ? meta.agentType : null,
+          description: typeof meta.description === "string" ? meta.description : null,
+        };
+      }
+      throw new Error("subagent transcript not found");
+    }
+
     async _activateTarget() {
       const target = this.mode === "latest" ? (this.sessions[0]?.path ?? null) : this.pinned;
       this.currentTarget = target;
@@ -4364,8 +4545,15 @@ ${titleEl}${wrap.outerHTML}
       if (!rel || !rel.endsWith(".jsonl")) return;
       // Only .jsonl files directly under a project folder are sessions. Deeper
       // ones (e.g. <session-id>/subagents/agent-*.jsonl) must not become
-      // sidebar entries — they'd show up as phantom empty sessions.
-      if (parts.length !== 2) return;
+      // sidebar entries — they'd show up as phantom empty sessions. A change
+      // to a subagent transcript only pings the parent session so an open
+      // thread can refresh (content is fetched on demand via loadSubagent).
+      if (parts.length !== 2) {
+        if (parts.length === 4 && parts[2] === "subagents") {
+          (this._dirtySubagents ??= new Set()).add(`${parts[0]}/${parts[1]}.jsonl`);
+        }
+        return;
+      }
       this._dirty ??= new Map();
       const prev = this._dirty.get(rel);
       // disappeared takes priority; otherwise keep the latest known handle
@@ -4378,6 +4566,13 @@ ${titleEl}${wrap.outerHTML}
     async _flush() {
       const dirty = this._dirty;
       this._dirty = new Map();
+      const dirtySubagents = this._dirtySubagents;
+      this._dirtySubagents = null;
+      if (dirtySubagents && this.handlers.onSubagentChange) {
+        for (const f of dirtySubagents) {
+          if (f === this.currentTarget) this.handlers.onSubagentChange({ file: f });
+        }
+      }
       if (!dirty || !dirty.size) return;
 
       const prevLatest = this.sessions[0]?.path ?? null;
