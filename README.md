@@ -43,10 +43,10 @@
   מצב אמין ("Claude עובד…" / "מכווץ הקשר…" / "ממתין לאישור…") עם שניות
   שרצות. הצופה שולח רק לשיחות שנפתחו ממנו — שיחה שנפתחה ב-VS Code או
   בטרמינל מוצגת לקריאה בלבד, כדי לא לפצל אותה בין שני תהליכים.
-- **צ'אט חדש מכל תיקייה.** כפתור `+` פותח דפדפן־תיקיות על מערכת הקבצים
+- **צ'אט חדש מכל תיקייה (מצב שרת בלבד).** כפתור `+` פותח דפדפן־תיקיות על מערכת הקבצים
   האמיתית — כולל יצירת תת-תיקייה חדשה בו במקום — והשיחה החדשה רצה בתיקייה
   שנבחרה.
-- **מצבי הרשאות פר-שיחה.** כפתור שמדפדף בין default / acceptEdits / plan /
+- **מצבי הרשאות פר-שיחה (מצב שרת בלבד).** כפתור שמדפדף בין default / acceptEdits / plan /
   bypassPermissions — המקבילה ל-Shift+Tab ב-CLI — ומשקף תמיד את המצב
   האמיתי של הסוכן (החלפה שנדחתה על ידי ה-CLI מוחזרת לאחור, לא משוקרת).
 - **כיווניות חכמה.** כיוון כל פסקה נקבע לפי רוב התווים שלה (לא לפי התו
@@ -148,10 +148,10 @@ from `~/.claude/projects` and tails it live.
   for approval…") with a running seconds counter. The viewer only drives
   sessions it started itself — a session opened in VS Code or a terminal stays
   read-only, so the conversation is never forked between two processes.
-- **New chat in any folder.** A `+` button opens a folder browser over the real
+- **New chat in any folder (server mode only).** A `+` button opens a folder browser over the real
   filesystem — including in-place sub-folder creation — and the new session
   runs in the folder you picked.
-- **Per-conversation permission modes.** A button cycles default / acceptEdits
+- **Per-conversation permission modes (server mode only).** A button cycles default / acceptEdits
   / plan / bypassPermissions — the CLI's Shift+Tab equivalent — and always
   reflects the agent's actual mode (a switch the CLI refuses is rolled back,
   never faked).
