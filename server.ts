@@ -1017,6 +1017,11 @@ try {
     if (!filename) return;
     const name = typeof filename === "string" ? filename : filename.toString();
     if (!name.endsWith(".jsonl")) return;
+    // Only .jsonl files directly under a project folder are sessions. Deeper
+    // ones (e.g. <session-id>/subagents/agent-*.jsonl) must not reach syncFile —
+    // they'd enter the snapshot as phantom empty sessions (initialScan never
+    // sees them, so they'd also vanish on restart).
+    if (name.replace(/\\/g, "/").split("/").length !== 2) return;
     scheduleChange(name);
   });
   watcher.on("error", err => console.error("watcher error:", err));

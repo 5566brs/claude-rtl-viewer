@@ -4359,8 +4359,13 @@ ${titleEl}${wrap.outerHTML}
     }
 
     _stageRecord(rec) {
-      const rel = (rec.relativePathComponents ?? []).join("/");
+      const parts = rec.relativePathComponents ?? [];
+      const rel = parts.join("/");
       if (!rel || !rel.endsWith(".jsonl")) return;
+      // Only .jsonl files directly under a project folder are sessions. Deeper
+      // ones (e.g. <session-id>/subagents/agent-*.jsonl) must not become
+      // sidebar entries — they'd show up as phantom empty sessions.
+      if (parts.length !== 2) return;
       this._dirty ??= new Map();
       const prev = this._dirty.get(rel);
       // disappeared takes priority; otherwise keep the latest known handle
